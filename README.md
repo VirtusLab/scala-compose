@@ -4,6 +4,29 @@
 [![Maven Central](https://img.shields.io/maven-central/v/org.virtuslab.scala-cli/cli_3.svg)](https://maven-badges.herokuapp.com/maven-central/org.virtuslab.scala-cli/cli_3)
 [![Discord](https://img.shields.io/discord/632277896739946517.svg?label=&logo=discord&logoColor=ffffff&color=404244&labelColor=6A7EC2)](https://discord.gg/KzQdYkZZza)
 
+Running the Scala Compose from sources. Default command is run:
+
+```bash
+./mill -i scala …arguments…
+```
+
+To run compile command from `scala-compose` module:
+```bash
+./mill -i scala compile …arguments…
+```
+
+#### Generate a standalone JVM launcher
+
+```bash
+./mill -i show scala-compose.standaloneLauncher
+```
+
+#### Generate a native launcher
+
+```bash
+./mill -i show scala-compose.nativeImage
+```
+
 Scala CLI is a command-line tool to interact with the Scala language. It lets you compile, run, test, and package your
 Scala code. (and more!) It shares some similarities with build tools, but it doesn't aim at supporting multi-module
 projects, nor to be extended via a task system.

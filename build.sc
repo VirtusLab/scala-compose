@@ -37,7 +37,8 @@ import _root_.scala.util.{Properties, Using}
 implicit def millModuleBasePath: define.BasePath =
   define.BasePath(super.millModuleBasePath.value / "modules")
 
-object cli extends Cli
+object `scala-compose` extends ScalaCompose
+object cli             extends Cli
 
 // Publish a bootstrapped, executable jar for a restricted environments
 object cliBootstrapped extends ScalaCliPublishModule {
@@ -669,6 +670,54 @@ class SpecificationLevel(val crossScalaVersion: String) extends ScalaCliCrossSbt
   }
 }
 
+trait ScalaCompose extends SbtModule with ProtoBuildModule with CliLaunchers
+    with FormatNativeImageConf {
+
+  private def myScalaVersion: String = Scala.defaultInternal
+
+  def scalaVersion = T(myScalaVersion)
+
+  def moduleDeps = Seq(
+    `cli`
+  )
+
+  def repositories = super.repositories ++ customRepositories
+
+  def ivyDeps = super.ivyDeps() ++ Agg(
+    Deps.caseApp
+  )
+  def compileIvyDeps = super.compileIvyDeps() ++ Agg(
+    Deps.jsoniterMacros,
+    Deps.svm
+  )
+  def mainClass = Some("scala.compose.ScalaCompose")
+
+  override def nativeImageClassPath = T {
+    val classpath = super.nativeImageClassPath().map(_.path).mkString(File.pathSeparator)
+    val cache     = T.dest / "native-cp"
+    // `scala3-graal-processor`.run() do not give me output and I cannot pass dynamically computed values like classpath
+    val res = mill.modules.Jvm.callSubprocess(
+      mainClass = `scala3-graal-processor`.finalMainClass(),
+      classPath = `scala3-graal-processor`.runClasspath().map(_.path),
+      mainArgs = Seq(cache.toNIO.toString, classpath),
+      workingDir = os.pwd
+    )
+    val cp = res.out.trim()
+    cp.split(File.pathSeparator).toSeq.map(p => mill.PathRef(os.Path(p)))
+  }
+
+  def localRepoJar = `local-repo`.localRepoJar()
+
+  object test extends Tests with ScalaCliTests with ScalaCliScalafixModule {
+    def moduleDeps = super.moduleDeps ++ Seq(
+      `build-module`.test
+    )
+    def runClasspath = T {
+      super.runClasspath() ++ Seq(localRepoJar())
+    }
+  }
+}
+
 trait Cli extends SbtModule with ProtoBuildModule with CliLaunchers
     with FormatNativeImageConf {
 
@@ -1236,7 +1285,7 @@ def unitTests() = T.command {
 }
 
 def scala(args: String*) = T.command {
-  cli.run(args: _*)()
+  `scala-compose`.run(args: _*)()
 }
 
 def defaultNativeImage() =
