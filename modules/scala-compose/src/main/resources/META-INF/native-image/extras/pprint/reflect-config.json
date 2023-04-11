@@ -1,0 +1,12 @@
+[
+  {
+    "name": "scala.collection.AbstractIterable",
+    "methods": [
+      {
+        "name": "collectionClassName",
+        "parameterTypes": [
+        ]
+      }
+    ]
+  }
+]
