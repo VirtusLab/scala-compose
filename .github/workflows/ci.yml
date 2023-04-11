@@ -90,6 +90,7 @@ jobs:
     - name: JVM integration tests
       run: ./mill -i integration.test.jvm
       env:
+<<<<<<< HEAD
         SCALA_CLI_IT_GROUP: 3
 
   generate-linux-launcher:
@@ -1076,3 +1077,6 @@ jobs:
         installers-regex: '\.msi$'
         fork-user: scala-steward
         token: ${{ secrets.STEWARD_WINGET_TOKEN }}
+=======
+        SCALA_CLI_IT_GROUP: 3
+>>>>>>> 00e49379 (Disable publishing and running native test)
