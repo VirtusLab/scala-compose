@@ -29,4 +29,4 @@ object Result:
   extension [T, E <: Exception](result: Result[T, E])
     inline def resolve[E1](inline onError: E => E1): Result[T, E1] = result match
       case succ @ Success(value) => succ
-      case Failure(error) => Failure(onError(error))
+      case Failure(error)        => Failure(onError(error))

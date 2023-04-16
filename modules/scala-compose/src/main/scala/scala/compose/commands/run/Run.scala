@@ -50,6 +50,6 @@ object Run extends ScalaCommand[RunOptions] with BuildCommandHelpers {
       execCommand(ConsoleCommand.parse(builderCommand).?).?
     }.match
       case Result.Failure(err) => reporter.error(err)
-      case Result.Success(()) => ()
+      case Result.Success(())  => ()
 
 }

@@ -7,7 +7,7 @@ import optional.*
 
 // type CanError[E] = Label[Result.Failure[E]]
 // type CanAbort[T, E] = Label[Result[T, E]]
-type CanError[E] = ReturnThrowable[Result.Failure[E]]
+type CanError[E]    = ReturnThrowable[Result.Failure[E]]
 type CanAbort[T, E] = ReturnThrowable[Result[T, E]]
 
 inline def failure[E](msg: E)(using inline canError: CanError[E]): Nothing =
@@ -29,4 +29,4 @@ extension [T](opt: Option[T])
   inline def asSuccess[E](onError: => E): Result[T, E] =
     opt match
       case Some(value) => Result.Success(value)
-      case None => Result.Failure(onError)
+      case None        => Result.Failure(onError)
