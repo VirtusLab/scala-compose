@@ -8,7 +8,6 @@ import scala.compose.builder.*
 
 class ConfigTest extends munit.FunSuite {
 
-
   // TODO: - first the app reads the config into a Config data structure
   //       - then for each module, read the project json from Scala CLI
   //       - then zip the two together to get ModuleSettings, which adds in info from the project json
@@ -36,49 +35,57 @@ class ConfigTest extends munit.FunSuite {
   extension [T](result: Result[T, String])
     def orFail: T = result match
       case Result.Success(value) => value
-      case Result.Failure(err) => fail(s"failed result: $err")
+      case Result.Failure(err)   => fail(s"failed result: $err")
 
   test("parse config from valid toml") {
 
     val config = Config.parse(exampleFullStackAppConf).orFail
 
-    assertEquals(config, Config(
-      scalaVersion = Some("3.2.2"),
-      modules = Map(
-        "webpage" -> Module(
-          name = "webpage",
-          root = "webpage",
-          kind = ModuleKind.Application(mainClass = Some("example.start")),
-          platforms = List(PlatformKind.`scala-js`),
-          dependsOn = List("core")
-        ),
-        "webserver" -> Module(
-          name = "webserver",
-          root = "webserver",
-          kind = ModuleKind.Application(mainClass = Some("example.WebServer")),
-          dependsOn = List("core"),
-          resourceGenerators = List(
-            ResourceGenerator.Copy(
-              target = Target(
-                module = "webpage",
-                kind = TargetKind.Package
-              ),
-              dest = "assets/main.js"
+    assertEquals(
+      config,
+      Config(
+        scalaVersion = Some("3.2.2"),
+        modules = Map(
+          "webpage" -> Module(
+            name = "webpage",
+            root = "webpage",
+            kind = ModuleKind.Application(mainClass = Some("example.start")),
+            platforms = List(PlatformKind.`scala-js`),
+            dependsOn = List("core")
+          ),
+          "webserver" -> Module(
+            name = "webserver",
+            root = "webserver",
+            kind = ModuleKind.Application(mainClass = Some("example.WebServer")),
+            dependsOn = List("core"),
+            resourceGenerators = List(
+              ResourceGenerator.Copy(
+                target = Target(
+                  module = "webpage",
+                  kind = TargetKind.Package
+                ),
+                dest = "assets/main.js"
+              )
             )
+          ),
+          "core" -> Module(
+            name = "core",
+            root = "core",
+            kind = ModuleKind.Library,
+            platforms = List(PlatformKind.jvm, PlatformKind.`scala-js`),
+            dependsOn = Nil
           )
-        ),
-        "core" -> Module(
-          name = "core",
-          root = "core",
-          kind = ModuleKind.Library,
-          platforms = List(PlatformKind.jvm, PlatformKind.`scala-js`),
-          dependsOn = Nil
         )
       )
-    ))
+    )
   }
 
-  def stageTest(name: munit.TestOptions)(rawConfig: String, command: SubCommand, targets: Seq[String], expected: List[List[String]])(using munit.Location) = {
+  def stageTest(name: munit.TestOptions)(
+    rawConfig: String,
+    command: SubCommand,
+    targets: Seq[String],
+    expected: List[List[String]]
+  )(using munit.Location) =
     test(name) {
       val config = Config.parse(rawConfig).orFail
 
@@ -95,7 +102,6 @@ class ConfigTest extends munit.FunSuite {
 
       assertEquals(targetNames, expected)
     }
-  }
 
   stageTest("sort module deps into stages [full-stack app, run]")(
     rawConfig = exampleFullStackAppConf,
@@ -151,7 +157,7 @@ class ConfigTest extends munit.FunSuite {
     targets = Seq("right"),
     expected = List(
       List("bottom:main:jvm"),
-      List("right:main:jvm"),
+      List("right:main:jvm")
     )
   )
 
@@ -176,7 +182,7 @@ class ConfigTest extends munit.FunSuite {
       List("D:main:jvm"),
       List("C:main:jvm"),
       List("B:main:jvm"),
-      List("A:main:jvm"),
+      List("A:main:jvm")
     )
   )
 
@@ -185,7 +191,7 @@ class ConfigTest extends munit.FunSuite {
     command = SubCommand.Repl,
     targets = Seq("D"),
     expected = List(
-      List("D:main:jvm"),
+      List("D:main:jvm")
     )
   )
 
@@ -195,7 +201,7 @@ class ConfigTest extends munit.FunSuite {
     targets = Seq("C"),
     expected = List(
       List("D:main:jvm"),
-      List("C:main:jvm"),
+      List("C:main:jvm")
     )
   )
 
@@ -206,7 +212,7 @@ class ConfigTest extends munit.FunSuite {
     expected = List(
       List("D:main:jvm"),
       List("C:main:jvm"),
-      List("B:main:jvm"),
+      List("B:main:jvm")
     )
   )
 
@@ -218,7 +224,7 @@ class ConfigTest extends munit.FunSuite {
       List("D:main:jvm"),
       List("C:main:jvm"),
       List("B:main:jvm"),
-      List("A:main:jvm"),
+      List("A:main:jvm")
     )
   )
 
@@ -238,7 +244,6 @@ class ConfigTest extends munit.FunSuite {
   dependsOn = ["libB"]
   """
 
-
   stageTest("sort module deps into stages [forked]")(
     rawConfig = forkedAppConf,
     command = SubCommand.Repl,
@@ -246,7 +251,7 @@ class ConfigTest extends munit.FunSuite {
     expected = List(
       List("common:main:jvm"),
       List("libA:main:jvm", "libB:main:jvm"),
-      List("topA:main:jvm", "topB:main:jvm"),
+      List("topA:main:jvm", "topB:main:jvm")
     )
   )
 
@@ -257,7 +262,7 @@ class ConfigTest extends munit.FunSuite {
     expected = List(
       List("common:main:jvm"),
       List("libA:main:jvm"),
-      List("topA:main:jvm"),
+      List("topA:main:jvm")
     )
   )
 
@@ -268,7 +273,7 @@ class ConfigTest extends munit.FunSuite {
     expected = List(
       List("common:main:jvm"),
       List("libA:main:jvm", "libB:main:jvm"),
-      List("topA:main:jvm", "topB:main:jvm"),
+      List("topA:main:jvm", "topB:main:jvm")
     )
   )
 
@@ -278,7 +283,7 @@ class ConfigTest extends munit.FunSuite {
     targets = Seq("libA", "libB"),
     expected = List(
       List("common:main:jvm"),
-      List("libA:main:jvm", "libB:main:jvm"),
+      List("libA:main:jvm", "libB:main:jvm")
     )
   )
 

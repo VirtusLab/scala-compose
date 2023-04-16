@@ -27,11 +27,10 @@ object Tasks:
 
     val results =
       if settings.sequential then
-        for module <- modules.toList yield
-          cleanOne(module)
+        for module <- modules.toList yield cleanOne(module)
       else
-        val futures = for module <- modules.toList yield
-          Future {
+        val futures =
+          for module <- modules.toList yield Future {
             blocking {
               cleanOne(module)
             }
@@ -42,13 +41,15 @@ object Tasks:
     }
   end clean
 
-  def run(module: Module, info: ModuleKind.Application, project: Targets)(using Settings): Result[Unit, String] =
+  def run(module: Module, info: ModuleKind.Application, project: Targets)(using
+    Settings
+  ): Result[Unit, String] =
     Result {
-      val target = project.application(module.name)
+      val target     = project.application(module.name)
       val appCommand = target.outCommand
 
       val mainMessage = info.mainClass match
-        case None => failure("no main class specified, TODO: interactive mode")
+        case None        => failure("no main class specified, TODO: interactive mode")
         case Some(value) => s"with specified main class $value"
 
       reporter.debug(s"running command: ${appCommand.mkString(" ")}")
@@ -62,11 +63,18 @@ object Tasks:
     def resourceDir = os.pwd / ".scala-builder" / module.name / "managed_resources"
 
     Result {
-      val target = project.library(module.name, PlatformKind.jvm)
-      val classpath = target.extraClasspath
+      val target       = project.library(module.name, PlatformKind.jvm)
+      val classpath    = target.extraClasspath
       val dependencies = target.extraDependencies
       val resourceArgs = Shared.resourceArgs(module)
-      val args = ScalaCommand.makeArgs(module, SubCommand.Repl, classpath, dependencies, PlatformKind.jvm, resourceArgs)
+      val args = ScalaCommand.makeArgs(
+        module,
+        SubCommand.Repl,
+        classpath,
+        dependencies,
+        PlatformKind.jvm,
+        resourceArgs
+      )
       reporter.debug(s"running command: ${args.map(_.value.mkString(" ")).mkString(" ")}")
       val result = ScalaCommand.spawn(args).?
 
@@ -74,7 +82,9 @@ object Tasks:
         failure(s"failure with exit code ${result.exitCode()}")
     }
 
-  def test(modules: Set[Module], project: Targets, initial: Targets)(using Settings): Result[Unit, String] =
+  def test(modules: Set[Module], project: Targets, initial: Targets)(using
+    Settings
+  ): Result[Unit, String] =
     def testOne(module: Module): Result[Unit, String] =
       def resourceDir = os.pwd / ".scala-builder" / module.name / "managed_resources"
       Result {
@@ -84,7 +94,14 @@ object Tasks:
           Shared.cleanBeforeCompile(module).?
 
         val resourceArgs = Shared.resourceArgs(module)
-        val args = ScalaCommand.makeArgs(module, SubCommand.Test, deps.classpath, deps.libraries, PlatformKind.jvm, resourceArgs)
+        val args = ScalaCommand.makeArgs(
+          module,
+          SubCommand.Test,
+          deps.classpath,
+          deps.libraries,
+          PlatformKind.jvm,
+          resourceArgs
+        )
         reporter.debug(s"running command: ${args.map(_.value.mkString(" ")).mkString(" ")}")
         val result = ScalaCommand.spawn(args).?
 
@@ -96,8 +113,8 @@ object Tasks:
         for module <- modules do
           testOne(module).?
       else
-        val futures = for module <- modules.toList yield
-          Future {
+        val futures =
+          for module <- modules.toList yield Future {
             blocking {
               testOne(module)
             }

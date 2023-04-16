@@ -19,19 +19,19 @@ import scala.compose.builder.PlatformKind
 
 enum TargetKind(val weight: Int) derives ReadWriter:
   case Library(platform: PlatformKind) extends TargetKind(2)
-  case Application extends TargetKind(2)
-  case Package extends TargetKind(2)
-  case Copy(target: Target) extends TargetKind(1)
+  case Application                     extends TargetKind(2)
+  case Package                         extends TargetKind(2)
+  case Copy(target: Target)            extends TargetKind(1)
 
   def show: String = this match
     case Library(kind) => s"main:$kind"
-    case Application => "runner"
-    case Package => "package"
-    case Copy(target) => s"copy[${target.show}]"
+    case Application   => "runner"
+    case Package       => "package"
+    case Copy(target)  => s"copy[${target.show}]"
 end TargetKind
 
 case class Target(module: String, kind: TargetKind) derives ReadWriter:
-  def show: String = s"${module}:${kind.show}"
+  def show: String = s"$module:${kind.show}"
 
 class TargetGraph private (private val targets: SeqMap[Target, collection.Seq[Target]]):
 
@@ -53,12 +53,15 @@ class TargetGraph private (private val targets: SeqMap[Target, collection.Seq[Ta
       for (k, v) <- lookup do
         buf.getOrElseUpdate(k, mutable.LinkedHashMap.empty[Target, Int])
         for dep <- v do
-          buf.getOrElseUpdate(dep, mutable.LinkedHashMap.empty[Target, Int]).update(k, dep.kind.weight)
+          buf.getOrElseUpdate(dep, mutable.LinkedHashMap.empty[Target, Int]).update(
+            k,
+            dep.kind.weight
+          )
       buf
 
     @tailrec
     def iterate(s1: List[Target], s0: List[Target], acc: List[List[Target]]): List[List[Target]] =
-      val sNext = mutable.LinkedHashSet.empty[Target]
+      val sNext     = mutable.LinkedHashSet.empty[Target]
       val sLeftOver = mutable.LinkedHashMap.empty[Target, mutable.LinkedHashSet[Target]]
 
       // reset weights of targets that are in s0
@@ -71,15 +74,15 @@ class TargetGraph private (private val targets: SeqMap[Target, collection.Seq[Ta
 
       val sAll = s1 ::: s0
 
-      val maxWeight = sAll.flatMap(t => outgoingEdges(t).values.maxOption).maxOption.getOrElse(1)
-      val minWeight = sAll.flatMap(t => outgoingEdges(t).values.minOption).minOption.getOrElse(1)
+      val maxWeight   = sAll.flatMap(t => outgoingEdges(t).values.maxOption).maxOption.getOrElse(1)
+      val minWeight   = sAll.flatMap(t => outgoingEdges(t).values.minOption).minOption.getOrElse(1)
       val decrementBy = minWeight
 
       extension (assoc: mutable.LinkedHashMap[Target, Int])
         def decrement(t: Target): Option[Int] =
           assoc.updateWith(t) {
             case Some(n) if n > decrementBy => Some(n - decrementBy)
-            case _ => None
+            case _                          => None
           }
 
       def once(): Unit =
@@ -93,7 +96,7 @@ class TargetGraph private (private val targets: SeqMap[Target, collection.Seq[Ta
               case (Some(_), Some(_)) =>
                 sLeftOver.getOrElseUpdate(dep, mutable.LinkedHashSet.empty) += target
 
-      var iterated = 0
+      var iterated  = 0
       var countDown = (maxWeight - minWeight) / decrementBy
       while
         once()
@@ -104,16 +107,20 @@ class TargetGraph private (private val targets: SeqMap[Target, collection.Seq[Ta
       if sNext.isEmpty then
         acc
       else
-        val s2 = sNext.toList
+        val s2    = sNext.toList
         val sRest = (sLeftOver -- s2).values.flatten.toList.distinct
         iterate(s2, sRest, s2 :: acc)
 
-    val s0 = incomingEdges.collect({ case (target, incoming) if incoming.isEmpty => target }).toList
+    val s0 = incomingEdges.collect { case (target, incoming) if incoming.isEmpty => target }.toList
     iterate(s0, Nil, s0 :: Nil)
   end _stages
 
 object TargetGraph:
-  def compile(graph: Map[String, Module], targetModules: Seq[Module], subcommand: SubCommand): Result[TargetGraph, String] =
+  def compile(
+    graph: Map[String, Module],
+    targetModules: Seq[Module],
+    subcommand: SubCommand
+  ): Result[TargetGraph, String] =
     Result {
       val excludeTarget = subcommand == SubCommand.Test
 
@@ -131,12 +138,17 @@ object TargetGraph:
               val fromPlatform =
                 val options = graph(fromModule).platforms
                 if options.sizeIs == 1 then options.head
-                else failure(s"cannot copy target ${fromTarget.show} because it is a package target and has multiple platforms")
+                else
+                  failure(
+                    s"cannot copy target ${fromTarget.show} because it is a package target and has multiple platforms"
+                  )
 
               stepModule(fromModule, fromPlatform, TargetKind.Package)
             case TargetKind.Library(_) => failure(s"cannot copy library target ${fromTarget.show}")
-            case TargetKind.Application => failure(s"cannot copy application target ${fromTarget.show}")
-            case TargetKind.Copy(target) => failure(s"cannot copy target ${fromTarget.show} because it is a copy target")
+            case TargetKind.Application =>
+              failure(s"cannot copy application target ${fromTarget.show}")
+            case TargetKind.Copy(target) =>
+              failure(s"cannot copy target ${fromTarget.show} because it is a copy target")
 
           target
 
@@ -160,17 +172,19 @@ object TargetGraph:
       end stepModule
 
       val rootKind = subcommand match
-        case SubCommand.Run => TargetKind.Application
-        case SubCommand.Repl => TargetKind.Library(PlatformKind.jvm)
-        case SubCommand.Test => TargetKind.Library(PlatformKind.jvm)
+        case SubCommand.Run   => TargetKind.Application
+        case SubCommand.Repl  => TargetKind.Library(PlatformKind.jvm)
+        case SubCommand.Test  => TargetKind.Library(PlatformKind.jvm)
         case SubCommand.Clean => failure("cannot create target graph for clean subcommand")
 
       val targetPlatforms =
         for target <- targetModules yield
-          val options = target.platforms
+          val options  = target.platforms
           val platform = options.head
           if options.sizeIs > 1 then
-            reporter.info(s"target ${target.name}:${rootKind.show} has multiple platforms, using $platform")
+            reporter.info(
+              s"target ${target.name}:${rootKind.show} has multiple platforms, using $platform"
+            )
           target -> platform
 
       if !excludeTarget then
@@ -179,7 +193,7 @@ object TargetGraph:
       else
         for
           (target, platform) <- targetPlatforms
-          dep <- target.dependsOn
+          dep                <- target.dependsOn
         do
           stepModule(dep, platform, rootKind)
 
@@ -207,25 +221,27 @@ case class Targets(graph: Map[String, TargetContext]) derives ReadWriter:
   def getCopy(name: String, target: Target): TargetState.Copy =
     graph(name).getCopy(target)
 
-  def ++ (updates: Iterable[(String, TargetState)]): Targets =
+  def ++(updates: Iterable[(String, TargetState)]): Targets =
     if updates.isEmpty then this
     else
       val collected = updates.groupMap((module, _) => module)((module, update) =>
         reporter.info(s"updated ${update.describe(module)}")
         update
       )
-      extension (st: TargetState) def targetKind: TargetKind = st match
-        case TargetState.Library(ProjectInputs(_, _, platform), _, _, _, _) => TargetKind.Library(platform)
-        case TargetState.Application(_, _, _) => TargetKind.Application
-        case TargetState.Package(_, _, _) => TargetKind.Package
-        case TargetState.Copy(target, _) => TargetKind.Copy(target)
+      extension (st: TargetState)
+        def targetKind: TargetKind = st match
+          case TargetState.Library(ProjectInputs(_, _, platform), _, _, _, _) =>
+            TargetKind.Library(platform)
+          case TargetState.Application(_, _, _) => TargetKind.Application
+          case TargetState.Package(_, _, _)     => TargetKind.Package
+          case TargetState.Copy(target, _)      => TargetKind.Copy(target)
 
       val graph0 = collected.foldLeft(graph) { case (graph, (module, updates)) =>
         val oldStates =
-          (for ctx <- graph.get(module) yield
-            Map.from(ctx.targets.map(state => state.targetKind -> state)))
-          .getOrElse(Map.empty)
-        val patches = updates.map(target => target.targetKind -> target)
+          (for ctx <- graph.get(module)
+          yield Map.from(ctx.targets.map(state => state.targetKind -> state)))
+            .getOrElse(Map.empty)
+        val patches   = updates.map(target => target.targetKind -> target)
         val newStates = oldStates ++ patches
         graph.updated(module, TargetContext(newStates.values.toSet))
       }
@@ -237,28 +253,40 @@ final class TargetId
 // TODO: update, need to store the associated PlatformKind with the project
 case class TargetContext(targets: Set[TargetState]) derives ReadWriter:
   def optLibrary(platform: PlatformKind): Option[TargetState.Library] =
-    targets.collectFirst({ case l: TargetState.Library if l.inputs.platform == platform => l })
+    targets.collectFirst { case l: TargetState.Library if l.inputs.platform == platform => l }
   def library(platform: PlatformKind): TargetState.Library = optLibrary(platform).get
-  def optApplication: Option[TargetState.Application] = targets.collectFirst({ case a: TargetState.Application => a })
+  def optApplication: Option[TargetState.Application] =
+    targets.collectFirst { case a: TargetState.Application => a }
   def application: TargetState.Application = optApplication.get
-  def optPackage: Option[TargetState.Package] = targets.collectFirst({ case p: TargetState.Package => p })
+  def optPackage: Option[TargetState.Package] =
+    targets.collectFirst { case p: TargetState.Package => p }
   def getPackage: TargetState.Package = optPackage.get
   def optCopy(target: Target): Option[TargetState.Copy] =
-    targets.collectFirst({ case c: TargetState.Copy if c.target == target => c })
+    targets.collectFirst { case c: TargetState.Copy if c.target == target => c }
   def getCopy(target: Target): TargetState.Copy =
     optCopy(target).get
 
-case class ProjectInputs(projectHash: String, sourcesHash: String, platform: PlatformKind) derives ReadWriter
+case class ProjectInputs(projectHash: String, sourcesHash: String, platform: PlatformKind)
+    derives ReadWriter
 
 /** A target is a cacheable entity, associated with a module */
 enum TargetState(val token: TargetId) derives ReadWriter:
-  case Library(inputs: ProjectInputs, extraDependencies: List[String], extraClasspath: List[String], dependencies: List[String], classpath: List[String]) extends TargetState(TargetId())
-  case Application(inputs: ProjectInputs, mainClass: Option[String], outCommand: List[String]) extends TargetState(TargetId())
-  case Package(inputs: ProjectInputs, mainClass: Option[String], outPath: String) extends TargetState(TargetId())
+  case Library(
+    inputs: ProjectInputs,
+    extraDependencies: List[String],
+    extraClasspath: List[String],
+    dependencies: List[String],
+    classpath: List[String]
+  ) extends TargetState(TargetId())
+  case Application(inputs: ProjectInputs, mainClass: Option[String], outCommand: List[String])
+      extends TargetState(TargetId())
+  case Package(inputs: ProjectInputs, mainClass: Option[String], outPath: String)
+      extends TargetState(TargetId())
   case Copy(target: Target, outPath: String) extends TargetState(TargetId())
 
   def describe(name: String): String = this match
-    case TargetState.Library(ProjectInputs(_, _, platform), _, _, _, _) => s"scala library target $name:main:$platform"
+    case TargetState.Library(ProjectInputs(_, _, platform), _, _, _, _) =>
+      s"scala library target $name:main:$platform"
     case TargetState.Application(_, _, _) => s"scala application target $name:runner"
-    case TargetState.Package(_, _, _) => s"package target $name:package"
-    case TargetState.Copy(target, _) => s"resource generator target $name:copy[${target.show}]"
+    case TargetState.Package(_, _, _)     => s"package target $name:package"
+    case TargetState.Copy(target, _)      => s"resource generator target $name:copy[${target.show}]"

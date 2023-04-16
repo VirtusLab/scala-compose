@@ -15,29 +15,36 @@ import scala.compose.builder.ResourceGenerator
 
 private[builder] object Shared:
 
-
-  case class Dependencies(initialState: List[TargetState.Library], currentState: List[TargetState.Library]):
-    val libraries = currentState.flatMap(s => s.dependencies ::: s.extraDependencies).distinct.sorted
-    val classpath = currentState.flatMap(s => s.classpath ::: s.extraClasspath).distinct.sorted
+  case class Dependencies(
+    initialState: List[TargetState.Library],
+    currentState: List[TargetState.Library]
+  ):
+    val libraries =
+      currentState.flatMap(s => s.dependencies ::: s.extraDependencies).distinct.sorted
+    val classpath    = currentState.flatMap(s => s.classpath ::: s.extraClasspath).distinct.sorted
     def changedState = initialState.map(_.token) != currentState.map(_.token)
 
-
-  def dependencies(module: Module, platform: PlatformKind, project: Targets, initial: Targets)(using Settings): Dependencies =
-    val initialDeps = module.dependsOn.flatMap(initial.optLibrary(_, platform)) // might not exist yet
+  def dependencies(module: Module, platform: PlatformKind, project: Targets, initial: Targets)(using
+    Settings
+  ): Dependencies =
+    val initialDeps =
+      module.dependsOn.flatMap(initial.optLibrary(_, platform)) // might not exist yet
     val currentDeps = module.dependsOn.map(project.library(_, platform)) // must exist
     Dependencies(initialDeps, currentDeps)
 
-  case class CopyResourceGens(initialState: List[TargetState.Copy], currentState: List[TargetState.Copy]):
+  case class CopyResourceGens(
+    initialState: List[TargetState.Copy],
+    currentState: List[TargetState.Copy]
+  ):
     def changedState = initialState.map(_.token) != currentState.map(_.token)
 
   def copyResourceGens(module: Module, project: Targets, initial: Targets)(using Settings) =
-    val copyTargets = module.resourceGenerators.collect({
+    val copyTargets = module.resourceGenerators.collect {
       case ResourceGenerator.Copy(target, dest) => target
-    })
+    }
     val initialCopyTargets = copyTargets.flatMap(initial.optCopy(module.name, _))
     val currentCopyTargets = copyTargets.map(project.getCopy(module.name, _))
     CopyResourceGens(initialCopyTargets, currentCopyTargets)
-
 
   def resourceDir(module: Module) = os.pwd / ".scala-builder" / module.name / "managed_resources"
 
@@ -51,28 +58,38 @@ private[builder] object Shared:
     Result.attempt {
       os.makeDir.all(path)
     }
-    .resolve {
-      case err: IOException => s"failed to create directory $path: ${err.getMessage}"
-    }
+      .resolve {
+        case err: IOException => s"failed to create directory $path: ${err.getMessage}"
+      }
 
   def clearAndRemoveDir(path: os.Path): Result[Unit, String] =
     Result.attempt {
       os.remove.all(path)
     }
-    .resolve {
-      case err: IOException => s"failed to create directory $path: ${err.getMessage}"
-    }
+      .resolve {
+        case err: IOException => s"failed to create directory $path: ${err.getMessage}"
+      }
 
-  def readStructure(module: Module, platform: PlatformKind)(using Settings): Result[(String, ujson.Value), String] =
+  def readStructure(module: Module, platform: PlatformKind)(using
+    Settings
+  ): Result[(String, ujson.Value), String] =
     Result {
-      val args = ScalaCommand.makeArgs(module, InternalCommand.ExportJson, classpath = Nil, dependencies = Nil, platform)
+      val args = ScalaCommand.makeArgs(
+        module,
+        InternalCommand.ExportJson,
+        classpath = Nil,
+        dependencies = Nil,
+        platform
+      )
       val result = ScalaCommand.call(args).?
       if result.exitCode != 0 then
-        failure(s"failed to read structure of module ${module.name}: ${result.err.lines().mkString("\n")}")
+        failure(
+          s"failed to read structure of module ${module.name}: ${result.err.lines().mkString("\n")}"
+        )
       else
-        val json = result.out.text()
+        val json    = result.out.text()
         val project = ujson.read(json)
-        val hasher = Hasher()
+        val hasher  = Hasher()
         hasher.mix(json.getBytes("UTF-8"))
         (hasher.result, project)
     }
@@ -88,11 +105,10 @@ private[builder] object Shared:
         s"$groupId:$fullName:$version"
       }
 
-
     val dependencies =
       optional {
-        val scopesObj = project.obj.get("scopes").?
-        val scopeObj = scopesObj.obj.get(scope).?
+        val scopesObj    = project.obj.get("scopes").?
+        val scopeObj     = scopesObj.obj.get(scope).?
         val dependencies = scopeObj.obj.get("dependencies").map(_.arr.toList).getOrElse(Nil)
         dependencies.map(dependency.?)
       }
@@ -108,21 +124,21 @@ private[builder] object Shared:
       Result.attempt {
         os.read.bytes(path)
       }.resolve {
-        case err: IOException => s"failed to hash file ${path}: ${err}"
+        case err: IOException => s"failed to hash file $path: $err"
       }
 
     def walkDir(path: String, ignore: List[String]): Result[Seq[os.Path], String] =
       val ignoreSet = ignore.map(asOsPath).toSet
-      val root = os.Path(path)
+      val root      = os.Path(path)
       Result.attempt {
         if os.exists(root) then
           os.walk(root, skip = ignoreSet.contains(_))
         else
           Nil
       }
-      .resolve {
-        case err: IOException => s"failed to walk directory ${path}: ${err}"
-      }
+        .resolve {
+          case err: IOException => s"failed to walk directory $path: $err"
+        }
     end walkDir
 
     def parseScopes = optional {
@@ -137,14 +153,17 @@ private[builder] object Shared:
     }
 
     def parseScopedResourceDirs(scopeObjs: List[ujson.Value]) = optional {
-      val resourceDirs = scopeObjs.flatMap(_.obj.get("resourcesDirs").map(_.arr.toList).getOrElse(Nil))
+      val resourceDirs =
+        scopeObjs.flatMap(_.obj.get("resourcesDirs").map(_.arr.toList).getOrElse(Nil))
       resourceDirs.map(_.str)
     }
 
     Result {
       val scopeObjs = parseScopes.asSuccess("failed to read scopes from project").?
-      val scopedSources = parseScopedSources(scopeObjs).asSuccess("failed to read sources from project").?
-      val scopedResourceDirs = parseScopedResourceDirs(scopeObjs).asSuccess("failed to read resource dirs from project").?
+      val scopedSources =
+        parseScopedSources(scopeObjs).asSuccess("failed to read sources from project").?
+      val scopedResourceDirs =
+        parseScopedResourceDirs(scopeObjs).asSuccess("failed to read resource dirs from project").?
       val hasher = Hasher()
       for source <- scopedSources do
         val bytes = readFile(asOsPath(source)).?
@@ -152,7 +171,7 @@ private[builder] object Shared:
 
       for
         resourceDir <- scopedResourceDirs
-        resource <- walkDir(resourceDir, ignore = scopedSources).?
+        resource    <- walkDir(resourceDir, ignore = scopedSources).?
         if os.isFile(resource)
       do
         val bytes = readFile(resource).?
@@ -177,7 +196,9 @@ private[builder] object Shared:
   end Hasher
 
   def runStep(
-    step: Step, curr: Targets, initial: Targets
+    step: Step,
+    curr: Targets,
+    initial: Targets
   )(using Settings): Result[Option[(String, TargetState)], String] =
     Result {
       reporter.debug(s"running step for target ${step.target.show}...")
@@ -191,7 +212,7 @@ private[builder] object Shared:
 
   def doCleanModule(module: Module)(using Settings): Result[Unit, String] =
     Result {
-      val args = ScalaCommand.makeArgs(module, SubCommand.Clean, Nil, Nil, PlatformKind.jvm)
+      val args   = ScalaCommand.makeArgs(module, SubCommand.Clean, Nil, Nil, PlatformKind.jvm)
       val result = ScalaCommand.call(args).?
       if result.exitCode != 0 then
         failure(s"failed to clean module ${module.name}: ${result.err.lines().mkString("\n")}")

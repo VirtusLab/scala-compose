@@ -24,26 +24,32 @@ sealed trait Plan:
 
 object Plan:
 
-  def compile(targetModules: Set[Module], subcommand: SubCommand)(using Settings): Result[Plan, String] =
+  def compile(targetModules: Set[Module], subcommand: SubCommand)(using
+    Settings
+  ): Result[Plan, String] =
     Result {
-      val graph = TargetGraph.compile(settings.config.modules, targetModules.toSeq, subcommand).?
+      val graph  = TargetGraph.compile(settings.config.modules, targetModules.toSeq, subcommand).?
       val stages = graph.stages
 
-      reporter.debug(s"compilation plan for command ${subcommand} ${targetModules.map(_.name).mkString(", ")}:\n${graph.show}")
+      reporter.debug(
+        s"compilation plan for command $subcommand ${targetModules.map(_.name).mkString(", ")}:\n${graph.show}"
+      )
 
       def lookup(name: String) = settings.config.modules(name)
 
       val stepss = stages.map { stage =>
         val steps: List[Step] = stage.map { target =>
           target.kind match
-            case TargetKind.Library(platform) => CompileScalaStep(lookup(target.module), target, platform)
+            case TargetKind.Library(platform) =>
+              CompileScalaStep(lookup(target.module), target, platform)
             case TargetKind.Application =>
               val module = lookup(target.module)
               RunScalaStep(module, module.kind.asApplication, target, module.platforms.head)
             case TargetKind.Package =>
               val module = lookup(target.module)
               PackageScalaStep(module, module.kind.asApplication, target, module.platforms.head)
-            case TargetKind.Copy(fromTarget) => CopyResourceStep(lookup(target.module), target, fromTarget)
+            case TargetKind.Copy(fromTarget) =>
+              CopyResourceStep(lookup(target.module), target, fromTarget)
         }
         steps
       }
@@ -64,12 +70,11 @@ object Plan:
             Result {
               stepss.foldLeft(initial) { (curr, steps) =>
                 val updateResultsF = Future.sequence {
-                  for step <- steps yield
-                    blocking {
-                      Future {
-                        Shared.runStep(step, curr, initial)
-                      }
+                  for step <- steps yield blocking {
+                    Future {
+                      Shared.runStep(step, curr, initial)
                     }
+                  }
                 }
                 val updateResults = Await.result(updateResultsF, Duration.Inf)
                 curr ++ updateResults.flatMap(_.?)

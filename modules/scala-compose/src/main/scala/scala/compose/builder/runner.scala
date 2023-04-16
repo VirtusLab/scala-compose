@@ -14,7 +14,7 @@ import java.io.IOException
     execCommand(ConsoleCommand.parse(args.toList).?).?
   }.match
     case Result.Failure(err) => reporter.error(err)
-    case Result.Success(()) => ()
+    case Result.Success(())  => ()
 
 enum ConsoleSubCommand:
   case Clean, ShowConfig
@@ -45,19 +45,43 @@ object ConsoleCommand:
               (Some(arg), rest)
             case _ =>
               (None, args)
-          ConsoleCommand(Run(project), debug = bool(args1, "--debug"), sequential = bool(args1, "--sequential"))
-        case "clean" :: args => ConsoleCommand(Clean, debug = args.contains("--debug"), sequential = bool(args, "--sequential"))
+          ConsoleCommand(
+            Run(project),
+            debug = bool(args1, "--debug"),
+            sequential = bool(args1, "--sequential")
+          )
+        case "clean" :: args => ConsoleCommand(
+            Clean,
+            debug = args.contains("--debug"),
+            sequential = bool(args, "--sequential")
+          )
         case "test" :: args =>
           val (projects, args1) = args match
             case arg :: rest if !arg.startsWith("-") =>
               (arg.split(":").toList, rest)
             case _ =>
               (Nil, args)
-          ConsoleCommand(Test(projects), debug = args1.contains("--debug"), sequential = bool(args, "--sequential"))
+          ConsoleCommand(
+            Test(projects),
+            debug = args1.contains("--debug"),
+            sequential = bool(args, "--sequential")
+          )
         case "repl" :: Nil => failure("missing project name for `repl` command")
-        case "repl" :: project :: args => ConsoleCommand(Repl(project), debug = args.contains("--debug"), sequential = bool(args, "--sequential"))
-        case "show-config" :: args => ConsoleCommand(ShowConfig, debug = args.contains("--debug"), sequential = bool(args, "--sequential"))
-        case "validate" :: args => ConsoleCommand(Validate, debug = args.contains("--debug"), sequential = bool(args, "--sequential"))
+        case "repl" :: project :: args => ConsoleCommand(
+            Repl(project),
+            debug = args.contains("--debug"),
+            sequential = bool(args, "--sequential")
+          )
+        case "show-config" :: args => ConsoleCommand(
+            ShowConfig,
+            debug = args.contains("--debug"),
+            sequential = bool(args, "--sequential")
+          )
+        case "validate" :: args => ConsoleCommand(
+            Validate,
+            debug = args.contains("--debug"),
+            sequential = bool(args, "--sequential")
+          )
         case _ => failure("Invalid command. Try `run [args]`")
     }
   end parse
@@ -66,9 +90,9 @@ end ConsoleCommand
 
 def run(project: Option[String])(using Settings): Result[Unit, String] =
   def doRun(app: Module) = Result {
-    val plan = Plan.compile(Set(app), SubCommand.Run).?
+    val plan         = Plan.compile(Set(app), SubCommand.Run).?
     val initialState = parseCache.?
-    val finalResult = plan.exec(initialState).?
+    val finalResult  = plan.exec(initialState).?
     writeCacheDiff(finalResult, initialState).?
     Tasks.run(app, app.kind.asApplication, finalResult).?
   }
@@ -81,12 +105,14 @@ def run(project: Option[String])(using Settings): Result[Unit, String] =
           case Some(name) =>
             apps.find(_.name == name) match
               case Some(app) => doRun(app).?
-              case None => failure(s"No application module found for name $name")
+              case None      => failure(s"No application module found for name $name")
           case None =>
             apps match
               case app :: Nil => doRun(app).?
               case _ =>
-                failure(s"Multiple application modules found (${apps.map(_.name).mkString(", ")}), please specify one with `run <name>`")
+                failure(
+                  s"Multiple application modules found (${apps.map(_.name).mkString(", ")}), please specify one with `run <name>`"
+                )
   }
 end run
 
@@ -102,10 +128,10 @@ def test(opts: Test)(using Settings): Result[Unit, String] =
     val filtered =
       if opts.projects.isEmpty then mods
       else mods.filter(m => opts.projects.contains(m.name))
-    val modsMsg = if filtered.sizeIs == 1 then "module" else "modules"
-    val plan = Plan.compile(filtered, SubCommand.Test).?
+    val modsMsg      = if filtered.sizeIs == 1 then "module" else "modules"
+    val plan         = Plan.compile(filtered, SubCommand.Test).?
     val initialState = parseCache.?
-    val finalResult = plan.exec(initialState).?
+    val finalResult  = plan.exec(initialState).?
     writeCacheDiff(finalResult, initialState).?
     Tasks.test(filtered, finalResult, initial = initialState).?
   }
@@ -114,9 +140,9 @@ def repl(opts: Repl)(using Settings): Result[Unit, String] =
   Result {
     settings.config.modules.values.find(_.name == opts.project) match
       case Some(module) =>
-        val plan = Plan.compile(Set(module), SubCommand.Repl).?
+        val plan         = Plan.compile(Set(module), SubCommand.Repl).?
         val initialState = parseCache.?
-        val finalResult = plan.exec(initialState).?
+        val finalResult  = plan.exec(initialState).?
         writeCacheDiff(finalResult, initialState).?
         Tasks.repl(module, finalResult).?
       case None => failure(s"Module ${opts.project} not found")
@@ -156,11 +182,13 @@ def parseCache(using Settings): Result[targets.Targets, String] =
     else
       targets.Targets(Map.empty)
   }
-  .resolve {
-    case err: IOException => s"error while parsing cache: $err"
-  }
+    .resolve {
+      case err: IOException => s"error while parsing cache: $err"
+    }
 
-def writeCacheDiff(project: targets.Targets, initial: targets.Targets)(using Settings): Result[Unit, String] =
+def writeCacheDiff(project: targets.Targets, initial: targets.Targets)(using
+  Settings
+): Result[Unit, String] =
   if initial eq project then
     reporter.debug(s"targets had no diff, will not write any updates to the cache.")
     Result.Success(())
@@ -169,20 +197,19 @@ def writeCacheDiff(project: targets.Targets, initial: targets.Targets)(using Set
     Result.attempt {
       os.write.over(cachePath, write(project), createFolders = true)
     }
-    .resolve {
-      case err: IllegalArgumentException => s"error while writing cache: $err"
-    }
-
+      .resolve {
+        case err: IllegalArgumentException => s"error while writing cache: $err"
+      }
 
 def execCommand(command: ConsoleCommand): Result[Unit, String] =
   Result {
-    val settings = Settings(command.debug, command.sequential, parseConfig.?)
+    val settings   = Settings(command.debug, command.sequential, parseConfig.?)
     given Settings = settings
     command.sub match
-      case Run(project) => run(project).?
-      case Clean => clean().?
+      case Run(project)   => run(project).?
+      case Clean          => clean().?
       case opts @ Repl(_) => repl(opts).?
       case opts @ Test(_) => test(opts).?
-      case ShowConfig => showConfig()
-      case Validate => validate()
+      case ShowConfig     => showConfig()
+      case Validate       => validate()
   }
