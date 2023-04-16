@@ -718,7 +718,11 @@ trait ScalaCompose extends SbtModule with ProtoBuildModule with CliLaunchers
   def repositories = super.repositories ++ customRepositories
 
   def ivyDeps = super.ivyDeps() ++ Agg(
-    Deps.caseApp
+    Deps.caseApp,
+    Deps.tomlScala, // TODO: fork?
+    Deps.osLib,
+    Deps.upickle, // TODO, use jsoniter
+    Deps.munit,
   )
   def compileIvyDeps = super.compileIvyDeps() ++ Agg(
     Deps.jsoniterMacros,
