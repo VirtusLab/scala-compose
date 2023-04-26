@@ -37,7 +37,19 @@ object Run extends ScalaCommand[RunOptions] with BuildCommandHelpers {
   override def sharedOptions(options: RunOptions): Option[SharedOptions] = Some(options.shared)
   override def scalaSpecificationLevel: SpecificationLevel               = SpecificationLevel.MUST
   override def runCommand(options: RunOptions, args: RemainingArgs, logger: Logger): Unit = {
-    println("Hello Scala Compose")
+    doRun(args)
   }
+
+  private def doRun(args: RemainingArgs): Unit =
+    import scala.compose.builder.*
+    import scala.compose.builder.errors.*
+
+    val builderCommand = "run" :: args.remaining.toList
+
+    Result {
+      execCommand(ConsoleCommand.parse(builderCommand).?).?
+    }.match
+      case Result.Failure(err) => reporter.error(err)
+      case Result.Success(())  => ()
 
 }
