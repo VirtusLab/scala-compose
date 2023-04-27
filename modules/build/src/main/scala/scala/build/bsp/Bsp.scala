@@ -7,18 +7,19 @@ import scala.build.input.{Inputs, ScalaCliInvokeData}
 import scala.concurrent.Future
 
 trait Bsp {
-  def run(initialInputs: Inputs, initialBspOptions: BspReloadableOptions): Future[Unit]
+  def run(initialInputs: Seq[Module], initialBspOptions: BspReloadableOptions): Future[Unit]
   def shutdown(): Unit
 }
 
 object Bsp {
   def create(
-    argsToInputs: Seq[String] => Either[BuildException, Inputs],
+    argsToInputs: Seq[String] => Either[BuildException, Seq[Module]],
     bspReloadableOptionsReference: BspReloadableOptions.Reference,
     threads: BspThreads,
     in: InputStream,
     out: OutputStream,
-    actionableDiagnostics: Option[Boolean]
+    actionableDiagnostics: Option[Boolean],
+    configDir: Option[os.Path]
   )(using ScalaCliInvokeData): Bsp =
     new BspImpl(
       argsToInputs,
@@ -26,6 +27,7 @@ object Bsp {
       threads,
       in,
       out,
-      actionableDiagnostics
+      actionableDiagnostics,
+      configDir
     )
 }

@@ -8,27 +8,27 @@ import scala.build.Build
 import scala.build.compiler.BloopCompiler
 import scala.build.input.{Inputs, OnDisk, SingleFile, Virtual}
 
+case class Module(inputs: Inputs, inputsHash: String, projectName: String, dependsOn: List[String])
 final class BloopSession(
-  val inputs: Inputs,
-  val inputsHash: String,
+  val modules: Seq[Module],
   val remoteServer: BloopCompiler,
   val bspServer: BspServer,
   val watcher: Build.Watcher
 ) {
   def resetDiagnostics(localClient: BspClient): Unit =
     for (targetId <- bspServer.targetIds)
-      inputs.flattened().foreach {
+      modules.foreach(_.inputs.flattened().foreach {
         case f: SingleFile =>
           localClient.resetDiagnostics(f.path, targetId)
         case _: Virtual =>
-      }
+      })
   def dispose(): Unit = {
     watcher.dispose()
     remoteServer.shutdown()
   }
 
   def registerWatchInputs(): Unit =
-    inputs.elements.foreach {
+    modules.foreach(_.inputs.elements.foreach {
       case elem: OnDisk =>
         val eventFilter: PathWatchers.Event => Boolean = { event =>
           val newOrDeletedFile =
@@ -50,17 +50,17 @@ final class BloopSession(
           }
         }
       case _ =>
-    }
+    })
 }
 
 object BloopSession {
 
   def apply(
-    inputs: Inputs,
+    modules: Seq[Module],
     remoteServer: BloopCompiler,
     bspServer: BspServer,
     watcher: Build.Watcher
-  ): BloopSession = new BloopSession(inputs, inputs.sourceHash(), remoteServer, bspServer, watcher)
+  ): BloopSession = new BloopSession(modules, remoteServer, bspServer, watcher)
 
   final class Reference {
     private val ref = new AtomicReference[BloopSession](null)

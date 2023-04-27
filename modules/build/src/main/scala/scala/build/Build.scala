@@ -820,13 +820,18 @@ object Build {
     scope: Scope,
     logger: Logger,
     artifacts: Artifacts,
-    maybeRecoverOnError: BuildException => Option[BuildException] = e => Some(e)
+    maybeRecoverOnError: BuildException => Option[BuildException] = e => Some(e),
+    projectNameOpt: Option[String] = None,
+    dependsOn: List[String] = Nil,
+    workspacePath: Option[os.Path] = None
   ): Either[BuildException, Project] = either {
 
     val allSources = sources.paths.map(_._1) ++ generatedSources.map(_.generated)
 
-    val classesDir0 = classesDir(inputs.workspace, inputs.projectName, scope)
-    val scaladocDir = classesDir(inputs.workspace, inputs.projectName, scope, suffix = "-doc")
+    val workspace   = workspacePath.getOrElse(inputs.workspace)
+    val projectName = projectNameOpt.getOrElse(inputs.projectName)
+    val classesDir0 = classesDir(workspace, projectName, scope)
+    val scaladocDir = classesDir(workspace, projectName, scope, suffix = "-doc")
 
     val generateSemanticDbs = options.scalaOptions.generateSemanticDbs.getOrElse(false)
 
@@ -952,8 +957,8 @@ object Build {
       artifacts.extraJavacPlugins
 
     val project = Project(
-      directory = inputs.workspace / Constants.workspaceDirName,
-      workspace = inputs.workspace,
+      directory = workspace / Constants.workspaceDirName,
+      workspace = workspace,
       classesDir = classesDir0,
       scaladocDir = scaladocDir,
       scalaCompiler = scalaCompilerParamsOpt,
@@ -964,14 +969,15 @@ object Build {
         if (options.platform.value == Platform.Native)
           Some(options.scalaNativeOptions.bloopConfig())
         else None,
-      projectName = inputs.scopeProjectName(scope),
+      projectName = projectName,
       classPath = fullClassPath,
       resolution = Some(Project.resolution(artifacts.detailedArtifacts)),
       sources = allSources,
       resourceDirs = sources.resourceDirs,
       scope = scope,
       javaHomeOpt = Option(options.javaHomeLocation().value),
-      javacOptions = javacOptions
+      javacOptions = javacOptions,
+      dependsOn = dependsOn
     )
     project
   }
@@ -986,7 +992,10 @@ object Build {
     compiler: ScalaCompiler,
     logger: Logger,
     buildClient: BloopBuildClient,
-    maybeRecoverOnError: BuildException => Option[BuildException] = e => Some(e)
+    maybeRecoverOnError: BuildException => Option[BuildException] = e => Some(e),
+    projectName: Option[String] = None,
+    dependsOn: List[String] = Nil,
+    workspace: Option[os.Path] = None
   ): Either[BuildException, (os.Path, Option[ScalaParameters], Artifacts, Project, Boolean)] =
     either {
 
@@ -1025,7 +1034,10 @@ object Build {
           scope,
           logger,
           artifacts,
-          maybeRecoverOnError
+          maybeRecoverOnError,
+          projectName,
+          dependsOn,
+          workspace
         )
       }
 
@@ -1074,7 +1086,8 @@ object Build {
         scope,
         compiler,
         logger,
-        buildClient
+        buildClient,
+        dependsOn = Nil
       )
     }
 

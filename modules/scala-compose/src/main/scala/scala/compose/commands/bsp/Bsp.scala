@@ -1,4 +1,4 @@
-package scala.cli.commands.bsp
+package scala.compose.commands.bsp
 
 import caseapp.*
 import com.github.plokhotnyuk.jsoniter_scala.core.*
@@ -8,37 +8,35 @@ import scala.build.*
 import scala.build.bsp.{BspReloadableOptions, BspThreads}
 import scala.build.errors.BuildException
 import scala.build.input.Inputs
-import scala.build.options.{BuildOptions, Scope}
+import scala.build.internal.CustomCodeWrapper
+import scala.build.options.BuildOptions
 import scala.cli.CurrentParams
 import scala.cli.commands.ScalaCommand
 import scala.cli.commands.publish.ConfigUtil.*
 import scala.cli.commands.shared.SharedOptions
 import scala.cli.config.{ConfigDb, Keys}
+import scala.compose.builder.*
+import scala.compose.builder.errors.*
 import scala.concurrent.Await
 import scala.concurrent.duration.Duration
-
 object Bsp extends ScalaCommand[BspOptions] {
   override def hidden                  = true
   override def scalaSpecificationLevel = SpecificationLevel.IMPLEMENTATION
   private def latestSharedOptions(options: BspOptions): SharedOptions =
-    options.jsonOptions
-      .map(path => os.Path(path, os.pwd))
-      .filter(path => os.exists(path) && os.isFile(path))
-      .map { optionsPath =>
-        val content = os.read.bytes(os.Path(optionsPath, os.pwd))
-        readFromArray(content)(SharedOptions.jsonCodec)
-      }.getOrElse(options.shared)
+    options.jsonOptions.map { optionsPath =>
+      val content = os.read.bytes(os.Path(optionsPath, os.pwd))
+      readFromArray(content)(SharedOptions.jsonCodec)
+    }.getOrElse(options.shared)
   override def sharedOptions(options: BspOptions): Option[SharedOptions] =
     Option(latestSharedOptions(options))
 
   // not reusing buildOptions here, since they should be reloaded live instead
-  override def runCommand(options: BspOptions, args: RemainingArgs, logger: Logger): Unit = {
-    if (options.shared.logging.verbosity >= 3)
-      pprint.err.log(args)
+  override def runCommand(options: BspOptions, args: RemainingArgs, logger: Logger): Unit = Result {
 
     val getSharedOptions: () => SharedOptions = () => latestSharedOptions(options)
+    val configDir                             = os.Path(options.confDir, Os.pwd)
 
-    val preprocessInputs: Seq[String] => Either[BuildException, (Seq[scala.build.bsp.Module], BuildOptions)] =
+    val argsToInputs: Seq[String] => Either[BuildException, Inputs] =
       argsSeq =>
         either {
           val sharedOptions = getSharedOptions()
@@ -47,61 +45,28 @@ object Bsp extends ScalaCommand[BspOptions] {
           if (sharedOptions.logging.verbosity >= 3)
             pprint.err.log(initialInputs)
 
-          val baseOptions      = buildOptions(sharedOptions)
+          val buildOptions0    = buildOptions(sharedOptions)
           val latestLogger     = sharedOptions.logging.logger
           val persistentLogger = new PersistentDiagnosticLogger(latestLogger)
 
-          val crossResult = CrossSources.forInputs(
-            initialInputs,
-            Sources.defaultPreprocessors(
-              baseOptions.archiveCache,
-              baseOptions.internal.javaClassNameVersionOpt,
-              () => baseOptions.javaHome().value.javaCommand
-            ),
-            persistentLogger,
-            baseOptions.suppressWarningOptions,
-            baseOptions.internal.exclude
-          )
+          val allInputs =
+            CrossSources.forInputs(
+              initialInputs,
+              Sources.defaultPreprocessors(
+                buildOptions0.scriptOptions.codeWrapper.getOrElse(CustomCodeWrapper),
+                buildOptions0.archiveCache,
+                buildOptions0.internal.javaClassNameVersionOpt,
+                () => buildOptions0.javaHome().value.javaCommand
+              ),
+              persistentLogger,
+              buildOptions0.suppressWarningOptions
+            ).map(_._2).getOrElse(initialInputs)
 
-          val (allInputs, finalBuildOptions) = {
-            for
-              crossSourcesAndInputs <- crossResult
-              // compiler bug, can't do :
-              // (crossSources, crossInputs) <- crossResult
-              (crossSources, crossInputs) = crossSourcesAndInputs
-              sharedBuildOptions          = crossSources.sharedOptions(baseOptions)
-              scopedSources <- crossSources.scopedSources(sharedBuildOptions)
-              resolvedBuildOptions =
-                scopedSources.buildOptionsFor(Scope.Main).foldRight(sharedBuildOptions)(_ orElse _)
-            yield (crossInputs, resolvedBuildOptions)
-          }.getOrElse(initialInputs -> baseOptions)
-
-          val inputs0 = Build.updateInputs(allInputs, baseOptions)
-
-          Seq(scala.build.bsp.Module(inputs0, inputs0.sourceHash(), inputs0.projectName, Nil)) -> finalBuildOptions
+          Build.updateInputs(allInputs, buildOptions(sharedOptions))
         }
-
-    val (inputs, finalBuildOptions) = preprocessInputs(args.all).orExit(logger)
-
-    /** values used for lauching the bsp, especially for launching a bloop server, they include
-      * options extracted from sources
-      */
-    val initialBspOptions = {
-      val sharedOptions = getSharedOptions()
-      BspReloadableOptions(
-        buildOptions = buildOptions(sharedOptions) orElse finalBuildOptions,
-        bloopRifleConfig = sharedOptions.bloopRifleConfig(Some(finalBuildOptions))
-          .orExit(sharedOptions.logger),
-        logger = sharedOptions.logging.logger,
-        verbosity = sharedOptions.logging.verbosity
-      )
-    }
 
     val bspReloadableOptionsReference = BspReloadableOptions.Reference { () =>
       val sharedOptions = getSharedOptions()
-      val bloopRifleConfig = sharedOptions.bloopRifleConfig(Some(finalBuildOptions))
-        .orExit(sharedOptions.logger)
-
       BspReloadableOptions(
         buildOptions = buildOptions(sharedOptions),
         bloopRifleConfig = sharedOptions.bloopRifleConfig().orExit(sharedOptions.logger),
@@ -110,23 +75,41 @@ object Bsp extends ScalaCommand[BspOptions] {
       )
     }
 
-    CurrentParams.workspaceOpt = Some(inputs.workspace)
     val actionableDiagnostics =
       options.shared.logging.verbosityOptions.actions
 
+    val config: Config = Settings(false, false, parseConfig(Some(configDir)).?).config
+    val modules: Seq[scala.build.bsp.Module] =
+      config.modules.iterator.map {
+        case (_, m) =>
+          val inputs = argsToInputs(
+            Seq((configDir / m.root).toString())
+          ).getOrElse(sys.error(s"Failed to parse inputs: ${m.root}"))
+
+          scala.build.bsp.Module(
+            inputs,
+            inputs.sourceHash(),
+            m.name,
+            m.dependsOn
+          )
+      }.toSeq
+
+    val argsToInputsModule: Seq[String] => Either[BuildException, Seq[scala.build.bsp.Module]] =
+      _ => Right(modules)
+
     BspThreads.withThreads { threads =>
       val bsp = scala.build.bsp.Bsp.create(
-        preprocessInputs.andThen(_.map(_._1)),
+        argsToInputsModule,
         bspReloadableOptionsReference,
         threads,
         System.in,
         System.out,
         actionableDiagnostics,
-        None
+        Some(configDir)
       )
 
       try {
-        val doneFuture = bsp.run(inputs, initialBspOptions)
+        val doneFuture = bsp.run(modules)
         Await.result(doneFuture, Duration.Inf)
       }
       finally bsp.shutdown()

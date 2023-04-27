@@ -99,7 +99,7 @@ class BuildServerProxy(
     bspServer().buildTargetJvmTestEnvironment(params)
 
   def targetIds: List[b.BuildTargetIdentifier] = bspServer().targetIds
-  def targetScopeIdOpt(scope: Scope): Option[b.BuildTargetIdentifier] =
+  def targetScopeIdOpt(scope: Scope): List[b.BuildTargetIdentifier] =
     bspServer().targetScopeIdOpt(scope)
   def setGeneratedSources(scope: Scope, sources: Seq[GeneratedSource]): Unit =
     bspServer().setGeneratedSources(scope, sources)
@@ -107,6 +107,6 @@ class BuildServerProxy(
     bspServer().setProjectName(workspace, name, scope)
   def resetProjectNames(): Unit =
     bspServer().resetProjectNames()
-  def newInputs(inputs: Inputs): Unit =
+  def newInputs(inputs: Seq[Module]): Unit =
     bspServer().newInputs(inputs)
 }

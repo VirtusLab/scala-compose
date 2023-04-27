@@ -16,8 +16,10 @@ class ScalaComposeCommands(
   lazy val actualDefaultCommand = run.Run
 
   private def allCommands = Seq[ScalaCommand[_]](
+    bsp.Bsp,
     compile.Compile,
     run.Run,
+    setupide.SetupIde,
     test.Test
   )
 
