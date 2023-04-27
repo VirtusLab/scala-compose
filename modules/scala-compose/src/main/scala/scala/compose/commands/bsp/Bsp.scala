@@ -1,4 +1,4 @@
-package scala.cli.commands.bsp
+package scala.compose.commands.bsp
 
 import caseapp.*
 import com.github.plokhotnyuk.jsoniter_scala.core.*
@@ -15,9 +15,10 @@ import scala.cli.commands.ScalaCommand
 import scala.cli.commands.publish.ConfigUtil.*
 import scala.cli.commands.shared.SharedOptions
 import scala.cli.config.{ConfigDb, Keys}
+import scala.compose.builder.*
+import scala.compose.builder.errors.*
 import scala.concurrent.Await
 import scala.concurrent.duration.Duration
-
 object Bsp extends ScalaCommand[BspOptions] {
   override def hidden                  = true
   override def scalaSpecificationLevel = SpecificationLevel.IMPLEMENTATION
@@ -30,13 +31,12 @@ object Bsp extends ScalaCommand[BspOptions] {
     Option(latestSharedOptions(options))
 
   // not reusing buildOptions here, since they should be reloaded live instead
-  override def runCommand(options: BspOptions, args: RemainingArgs, logger: Logger): Unit = {
-    if (options.shared.logging.verbosity >= 3)
-      pprint.err.log(args)
+  override def runCommand(options: BspOptions, args: RemainingArgs, logger: Logger): Unit = Result {
 
     val getSharedOptions: () => SharedOptions = () => latestSharedOptions(options)
+    val configDir                             = os.Path(options.confDir, Os.pwd)
 
-    val argsToInputs: Seq[String] => Either[BuildException, Seq[scala.build.bsp.Module]] =
+    val argsToInputs: Seq[String] => Either[BuildException, Inputs] =
       argsSeq =>
         either {
           val sharedOptions = getSharedOptions()
@@ -62,8 +62,7 @@ object Bsp extends ScalaCommand[BspOptions] {
               buildOptions0.suppressWarningOptions
             ).map(_._2).getOrElse(initialInputs)
 
-          val inputs = Build.updateInputs(allInputs, buildOptions(sharedOptions))
-          Seq(scala.build.bsp.Module(inputs, inputs.sourceHash(), inputs.projectName, Nil))
+          Build.updateInputs(allInputs, buildOptions(sharedOptions))
         }
 
     val bspReloadableOptionsReference = BspReloadableOptions.Reference { () =>
@@ -76,23 +75,41 @@ object Bsp extends ScalaCommand[BspOptions] {
       )
     }
 
-    val inputs = argsToInputs(args.all).orExit(logger)
     val actionableDiagnostics =
       options.shared.logging.verbosityOptions.actions
 
+    val config: Config = Settings(false, false, parseConfig(Some(configDir)).?).config
+    val modules: Seq[scala.build.bsp.Module] =
+      config.modules.iterator.map {
+        case (_, m) =>
+          val inputs = argsToInputs(
+            Seq((configDir / m.root).toString())
+          ).getOrElse(sys.error(s"Failed to parse inputs: ${m.root}"))
+
+          scala.build.bsp.Module(
+            inputs,
+            inputs.sourceHash(),
+            m.name,
+            m.dependsOn
+          )
+      }.toSeq
+
+    val argsToInputsModule: Seq[String] => Either[BuildException, Seq[scala.build.bsp.Module]] =
+      _ => Right(modules)
+
     BspThreads.withThreads { threads =>
       val bsp = scala.build.bsp.Bsp.create(
-        argsToInputs,
+        argsToInputsModule,
         bspReloadableOptionsReference,
         threads,
         System.in,
         System.out,
         actionableDiagnostics,
-        None
+        Some(configDir)
       )
 
       try {
-        val doneFuture = bsp.run(inputs)
+        val doneFuture = bsp.run(modules)
         Await.result(doneFuture, Duration.Inf)
       }
       finally bsp.shutdown()

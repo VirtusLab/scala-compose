@@ -154,8 +154,8 @@ def showConfig()(using Settings): Unit =
 def validate(): Unit =
   println("config is valid")
 
-def parseConfig: Result[Config, String] =
-  val location = os.pwd / "builder.toml"
+def parseConfig(workspace: Option[os.Path] = None): Result[Config, String] =
+  val location = workspace.getOrElse(os.pwd) / "builder.toml"
 
   def readConfig() =
     Result.attempt {
@@ -203,7 +203,7 @@ def writeCacheDiff(project: targets.Targets, initial: targets.Targets)(using
 
 def execCommand(command: ConsoleCommand): Result[Unit, String] =
   Result {
-    val settings   = Settings(command.debug, command.sequential, parseConfig.?)
+    val settings   = Settings(command.debug, command.sequential, parseConfig().?)
     given Settings = settings
     command.sub match
       case Run(project)   => run(project).?

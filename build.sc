@@ -688,7 +688,7 @@ trait ScalaCompose extends SbtModule with ProtoBuildModule with CliLaunchers
     Deps.tomlScala, // TODO: fork?
     Deps.osLib,
     Deps.upickle, // TODO, use jsoniter
-    Deps.munit,
+    Deps.munit
   )
   def compileIvyDeps = super.compileIvyDeps() ++ Agg(
     Deps.jsoniterMacros,

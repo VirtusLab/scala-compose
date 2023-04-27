@@ -9,10 +9,10 @@ import scala.build.options.Scope
 
 trait HasGeneratedSources {
   def targetIds: List[b.BuildTargetIdentifier]
-  def targetScopeIdOpt(scope: Scope): Option[b.BuildTargetIdentifier]
+  def targetScopeIdOpt(scope: Scope): List[b.BuildTargetIdentifier]
   def setProjectName(workspace: os.Path, name: String, scope: Scope): Unit
   def resetProjectNames(): Unit
-  def newInputs(inputs: Inputs): Unit
+  def newInputs(inputs: Seq[Module]): Unit
   def setGeneratedSources(scope: Scope, sources: Seq[GeneratedSource]): Unit
 }
 
