@@ -14,7 +14,6 @@ import org.eclipse.lsp4j.jsonrpc.messages.ResponseError
 import java.io.{InputStream, OutputStream}
 import java.util.UUID
 import java.util.concurrent.{CompletableFuture, Executor}
-
 import scala.build.EitherCps.{either, value}
 import scala.build.*
 import scala.build.compiler.BloopCompiler
@@ -25,8 +24,8 @@ import scala.build.errors.{
   ParsingInputsException
 }
 import scala.build.input.{Inputs, ScalaCliInvokeData}
-import scala.build.internal.Constants
-import scala.build.options.{BuildOptions, Scope}
+import scala.build.internal.{Constants, CustomCodeWrapper}
+import scala.build.options.{BuildOptions, Platform, ScalaOptions, Scope}
 import scala.collection.mutable.ListBuffer
 import scala.concurrent.duration.DurationInt
 import scala.concurrent.{ExecutionContext, Future, Promise}
@@ -99,8 +98,9 @@ final class BspImpl(
     val persistentLogger = new PersistentDiagnosticLogger(logger)
     val bspServer        = currentBloopSession.bspServer
 
-    currentBloopSession.modules.map { module =>
+    val crossModules = currentBloopSession.modules.map { module =>
       val inputs = module.inputs
+
       // allInputs contains elements from using directives
       val (crossSources, allInputs) = value {
         CrossSources.forInputs(
@@ -128,13 +128,82 @@ final class BspImpl(
       if (verbosity >= 3)
         pprint.err.log(scopedSources)
 
+      CrossModule(module, allInputs, crossSources, scopedSources)
+    }
+
+    val crossModuleLookup = crossModules.map(cm => cm.module.projectName -> cm).toMap
+
+    extension (cm: CrossModule)
+      def depOptions(
+        baseOptions: BuildOptions,
+        scope: Scope,
+        platform: Positioned[Platform]
+      ): BuildOptions =
+        def getDepOptions(options: BuildOptions, optClassDir: Option[os.Path]) =
+          BuildOptions(
+            scalaOptions = ScalaOptions(platform = Some(platform)),
+            classPathOptions =
+              optClassDir.fold(options.classPathOptions) { dir =>
+                options.classPathOptions.copy(extraClassPath =
+                  dir +: options.classPathOptions.extraClassPath
+                )
+              }
+          )
+
+        def step(acc: BuildOptions, dep: String) =
+          val depM = crossModuleLookup(dep)
+          val classesDir0 =
+            if scope == Scope.Test then None
+            else
+              configDir match
+                case Some(workspace) =>
+                  Some(Build.classesDir(workspace, depM.module.projectName, scope))
+                case None =>
+                  Some(Build.classesDir(
+                    depM.allInputs.workspace,
+                    depM.allInputs.projectName,
+                    scope
+                  ))
+          val sharedOpts = getDepOptions(depM.crossSources.sharedOptions(acc), classesDir0)
+          val acc1 =
+            depM
+              .scopedSources
+              .buildOptions
+              .flatMap(_.valueFor(scope))
+              .foldRight(sharedOpts)((d, acc) => getDepOptions(d, None).orElse(acc))
+          depM.depOptions(acc1, scope, platform)
+
+        cm.module.dependsOn.foldLeft(baseOptions)(step)
+      end depOptions
+
+    crossModules.map { cm =>
+
+      val sharedOptions = cm.crossSources.sharedOptions(buildOptions)
+
+      val platformArg =
+        if cm.module.platforms.sizeIs == 1 then
+          cm.module.platforms.head match
+            case "jvm"          => Some(scala.build.options.Platform.JVM)
+            case "scala-js"     => Some(scala.build.options.Platform.JS)
+            case "scala-native" => Some(scala.build.options.Platform.Native)
+        else
+          None
+
+      val platformArg0 =
+        platformArg.map(p => Positioned(List(Position.Custom("DEFAULT-COMPOSE")), p))
+
+      val modulePlatform = platformArg0.getOrElse(sharedOptions.platform)
+
+      val mainDeps = cm.depOptions(buildOptions, Scope.Main, modulePlatform)
+      val testDeps = cm.depOptions(buildOptions, Scope.Test, modulePlatform)
+
       val sourcesMain = value {
-        scopedSources.sources(Scope.Main, sharedOptions, allInputs.workspace)
+        cm.scopedSources.sources(Scope.Main, sharedOptions orElse mainDeps, allInputs.workspace)
           .left.map((_, Scope.Main))
       }
 
       val sourcesTest = value {
-        scopedSources.sources(Scope.Test, sharedOptions, allInputs.workspace)
+        cm.scopedSources.sources(Scope.Test, sharedOptions orElse testDeps, allInputs.workspace)
           .left.map((_, Scope.Test))
       }
 
@@ -144,8 +213,10 @@ final class BspImpl(
       val options0Main = sourcesMain.buildOptions
       val options0Test = sourcesTest.buildOptions.orElse(options0Main)
 
-      val generatedSourcesMain = sourcesMain.generateSources(allInputs.generatedSrcRoot(Scope.Main))
-      val generatedSourcesTest = sourcesTest.generateSources(allInputs.generatedSrcRoot(Scope.Test))
+      val generatedSourcesMain =
+        sourcesMain.generateSources(cm.allInputs.generatedSrcRoot(Scope.Main))
+      val generatedSourcesTest =
+        sourcesTest.generateSources(cm.allInputs.generatedSrcRoot(Scope.Test))
 
       bspServer.setExtraDependencySources(options0Main.classPathOptions.extraSourceJars)
       bspServer.setExtraTestDependencySources(options0Test.classPathOptions.extraSourceJars)
@@ -154,7 +225,7 @@ final class BspImpl(
 
       val (classesDir0Main, scalaParamsMain, artifactsMain, projectMain, buildChangedMain) = value {
         val res = Build.prepareBuild(
-          allInputs,
+          cm.allInputs,
           sourcesMain,
           generatedSourcesMain,
           options0Main,
@@ -164,8 +235,8 @@ final class BspImpl(
           persistentLogger,
           localClient,
           maybeRecoverOnError(Scope.Main),
-          projectName = Some(module.projectName),
-          dependsOn = module.dependsOn,
+          projectName = Some(cm.module.projectName),
+          dependsOn = cm.module.dependsOn,
           workspace = configDir
         )
         res.left.map((_, Scope.Main))
@@ -173,7 +244,7 @@ final class BspImpl(
 
       val (classesDir0Test, scalaParamsTest, artifactsTest, projectTest, buildChangedTest) = value {
         val res = Build.prepareBuild(
-          allInputs,
+          cm.allInputs,
           sourcesTest,
           generatedSourcesTest,
           options0Test,
@@ -183,8 +254,8 @@ final class BspImpl(
           persistentLogger,
           localClient,
           maybeRecoverOnError(Scope.Test),
-          projectName = Some(s"${module.projectName}-test"),
-          dependsOn = module.dependsOn,
+          projectName = Some(s"${cm.module.projectName}-test"),
+          dependsOn = cm.module.dependsOn,
           workspace = configDir
         )
         res.left.map((_, Scope.Test))

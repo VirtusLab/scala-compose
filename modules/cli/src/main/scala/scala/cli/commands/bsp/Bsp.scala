@@ -78,7 +78,13 @@ object Bsp extends ScalaCommand[BspOptions] {
 
           val inputs0 = Build.updateInputs(allInputs, baseOptions)
 
-          Seq(scala.build.bsp.Module(inputs0, inputs0.sourceHash(), inputs0.projectName, Nil)) -> finalBuildOptions
+          Seq(scala.build.bsp.Module(
+            inputs0,
+            inputs0.sourceHash(),
+            inputs0.projectName,
+            dependsOn = Nil,
+            platforms = Nil
+          )) -> finalBuildOptions
         }
 
     val (inputs, finalBuildOptions) = preprocessInputs(args.all).orExit(logger)

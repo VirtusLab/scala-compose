@@ -176,6 +176,7 @@ object Deps {
     ivy"org.virtuslab.scala-cli-signing::cli:${Versions.signingCli}"
       // to prevent collisions with scala-cli's case-app version
       .exclude(("com.github.alexarchambault", "case-app_3"))
+<<<<<<< HEAD
       .exclude(("com.github.plokhotnyuk.jsoniter-scala", "jsoniter-scala-core_3"))
       .exclude(("com.github.plokhotnyuk.jsoniter-scala", "jsoniter-scala-macros_3"))
   def slf4jNop                = ivy"org.slf4j:slf4j-nop:2.0.9"
@@ -191,6 +192,17 @@ object Deps {
   def typelevelToolkitTest    = ivy"org.typelevel:toolkit-test:$typelevelToolkitVersion"
   def usingDirectives         = ivy"org.virtuslab:using_directives:1.1.0"
   // Lives at https://github.com/VirtusLab/no-crc32-zip-input-stream, see #865
+=======
+  def slf4jNop = ivy"org.slf4j:slf4j-nop:2.0.6"
+  def sttp     = ivy"com.softwaremill.sttp.client3:core_2.13:3.8.8"
+  def svm      = ivy"org.graalvm.nativeimage:svm:$graalVmVersion"
+  def swoval   = ivy"com.swoval:file-tree-views:2.1.9"
+  // Force using of 2.13 - is there a better way?
+  def tomlScala       = ivy"tech.sparse:toml-scala_2.13:0.2.2"
+  def testInterface   = ivy"org.scala-sbt:test-interface:1.0"
+  def toolkit         = ivy"org.scala-lang:toolkit:0.1.6"
+  def usingDirectives = ivy"org.virtuslab:using_directives:0.1.0"
+>>>>>>> 6fb6880c (integrate dependencies)
   def upickle         = ivy"com.lihaoyi::upickle:3.1.0"
   def tomlScala       = ivy"tech.sparse:toml-scala_2.13:0.2.2"
   // This provides a ZipInputStream that doesn't verify CRC32 checksums, that users

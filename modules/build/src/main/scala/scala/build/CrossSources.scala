@@ -13,6 +13,7 @@ import scala.build.errors.{
   MalformedDirectiveError,
   Severity
 }
+import scala.build.bsp.CrossModule
 import scala.build.input.ElementsUtils.*
 import scala.build.input.*
 import scala.build.internal.Constants
