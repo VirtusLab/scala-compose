@@ -3,12 +3,24 @@ package scala.build.bsp
 import com.swoval.files.PathWatchers
 
 import java.util.concurrent.atomic.AtomicReference
-
-import scala.build.Build
+import scala.build.{Build, ScopedSources, CrossSources}
 import scala.build.compiler.BloopCompiler
 import scala.build.input.{Inputs, OnDisk, SingleFile, Virtual}
 
-case class Module(inputs: Inputs, inputsHash: String, projectName: String, dependsOn: List[String])
+case class Module(
+  inputs: Inputs,
+  inputsHash: String,
+  projectName: String,
+  dependsOn: List[String],
+  platforms: List[String]
+)
+final case class CrossModule(
+  module: Module,
+  allInputs: Inputs,
+  crossSources: CrossSources,
+  scopedSources: ScopedSources
+)
+
 final class BloopSession(
   val modules: Seq[Module],
   val remoteServer: BloopCompiler,

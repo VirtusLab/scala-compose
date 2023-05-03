@@ -63,7 +63,13 @@ object Bsp extends ScalaCommand[BspOptions] {
             ).map(_._2).getOrElse(initialInputs)
 
           val inputs = Build.updateInputs(allInputs, buildOptions(sharedOptions))
-          Seq(scala.build.bsp.Module(inputs, inputs.sourceHash(), inputs.projectName, Nil))
+          Seq(scala.build.bsp.Module(
+            inputs,
+            inputs.sourceHash(),
+            inputs.projectName,
+            dependsOn = Nil,
+            platforms = Nil
+          ))
         }
 
     val bspReloadableOptionsReference = BspReloadableOptions.Reference { () =>

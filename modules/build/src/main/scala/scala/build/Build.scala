@@ -1000,7 +1000,9 @@ object Build {
 
       buildClient.setProjectParams(scopeParams ++ value(options0.projectParams))
 
-      val classesDir0 = classesDir(inputs.workspace, inputs.projectName, scope)
+      val classesDir0 = (workspace, projectName) match
+        case (Some(configDir), Some(projectN)) => classesDir(configDir, projectN, scope)
+        case _ => classesDir(inputs.workspace, inputs.projectName, scope)
 
       val artifacts = value(options0.artifacts(logger, scope, maybeRecoverOnError))
 
