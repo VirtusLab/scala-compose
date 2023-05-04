@@ -195,16 +195,7 @@ final class BspImpl(
       val modulePlatform = platformArg0.getOrElse(sharedOptions.platform)
 
       val mainDeps = cm.depOptions(buildOptions, Scope.Main, modulePlatform)
-      val testDeps = {
-        val testBuildOptions = cm.depOptions(buildOptions, Scope.Test, modulePlatform)
-        // add the main classes dir to the module test classpath
-        val moduleWorkspace = configDir.getOrElse(cm.allInputs.workspace)
-        BuildOptions(
-          classPathOptions = ClassPathOptions(
-            extraClassPath = Seq(Build.classesDir(moduleWorkspace, cm.module.projectName, Scope.Main))
-          )
-        ).orElse(testBuildOptions)
-      }
+      val testDeps = cm.depOptions(buildOptions, Scope.Test, modulePlatform)
 
       val sourcesMain = value {
         cm.scopedSources.sources(Scope.Main, sharedOptions orElse mainDeps, allInputs.workspace)
