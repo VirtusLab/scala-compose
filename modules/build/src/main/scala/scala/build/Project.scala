@@ -59,17 +59,17 @@ final case class Project(
       scope
     )
 
-      baseProject.copy(
-        workspaceDir = Some(workspace.toNIO),
-        classpath = classPath.map(_.toNIO).toList,
-        sources = sources.iterator.map(_.toNIO).toList,
-        resources = Some(resourceDirs).filter(_.nonEmpty).map(_.iterator.map(_.toNIO).toList),
-        platform = Some(platform),
-        `scala` = scalaConfigOpt,
-        java = Some(BloopConfig.Java(javacOptions)),
-        resolution = resolution,
-        dependencies = baseProject.dependencies ++ dependsOn
-      )
+    baseProject.copy(
+      workspaceDir = Some(workspace.toNIO),
+      classpath = classPath.map(_.toNIO).toList,
+      sources = sources.iterator.map(_.toNIO).toList,
+      resources = Some(resourceDirs).filter(_.nonEmpty).map(_.iterator.map(_.toNIO).toList),
+      platform = Some(platform),
+      `scala` = scalaConfigOpt,
+      java = Some(BloopConfig.Java(javacOptions)),
+      resolution = resolution,
+      dependencies = baseProject.dependencies ++ dependsOn
+    )
   }
 
   def bloopFile: BloopConfig.File =

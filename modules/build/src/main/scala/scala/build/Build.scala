@@ -927,8 +927,12 @@ object Build {
 
     // `test` scope should contains class path to main scope
     val mainClassesPath =
-      if (scope == Scope.Test)
-        List(classesDir(inputs.workspace, inputs.projectName, Scope.Main))
+      if (scope == Scope.Test) {
+        val mainProjectName = projectNameOpt match
+          case Some(s"$projectName-test") => projectName
+          case _                          => inputs.projectName
+        List(classesDir(workspace, mainProjectName, Scope.Main))
+      }
       else Nil
 
     value(validate(logger, options))
