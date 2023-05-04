@@ -25,7 +25,7 @@ import scala.build.errors.{
 }
 import scala.build.input.{Inputs, ScalaCliInvokeData}
 import scala.build.internal.{Constants, CustomCodeWrapper}
-import scala.build.options.{BuildOptions, Platform, ScalaOptions, Scope}
+import scala.build.options.{BuildOptions, ClassPathOptions, Platform, ScalaOptions, Scope}
 import scala.collection.mutable.ListBuffer
 import scala.concurrent.duration.DurationInt
 import scala.concurrent.{ExecutionContext, Future, Promise}
@@ -195,7 +195,16 @@ final class BspImpl(
       val modulePlatform = platformArg0.getOrElse(sharedOptions.platform)
 
       val mainDeps = cm.depOptions(buildOptions, Scope.Main, modulePlatform)
-      val testDeps = cm.depOptions(buildOptions, Scope.Test, modulePlatform)
+      val testDeps = {
+        val testBuildOptions = cm.depOptions(buildOptions, Scope.Test, modulePlatform)
+        // add the main classes dir to the module test classpath
+        val moduleWorkspace = configDir.getOrElse(cm.allInputs.workspace)
+        BuildOptions(
+          classPathOptions = ClassPathOptions(
+            extraClassPath = Seq(Build.classesDir(moduleWorkspace, cm.module.projectName, Scope.Main))
+          )
+        ).orElse(testBuildOptions)
+      }
 
       val sourcesMain = value {
         cm.scopedSources.sources(Scope.Main, sharedOptions orElse mainDeps, allInputs.workspace)

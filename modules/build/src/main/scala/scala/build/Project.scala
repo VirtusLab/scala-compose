@@ -51,14 +51,15 @@ final case class Project(
         jars = scalaCompiler0.compilerClassPath.map(_.toNIO).toList
       )
     }
-    baseBloopProject(
+    val baseProject = baseBloopProject(
       projectName,
       directory.toNIO,
       (directory / ".bloop" / projectName).toNIO,
       classesDir.toNIO,
       scope
     )
-      .copy(
+
+      baseProject.copy(
         workspaceDir = Some(workspace.toNIO),
         classpath = classPath.map(_.toNIO).toList,
         sources = sources.iterator.map(_.toNIO).toList,
@@ -67,7 +68,7 @@ final case class Project(
         `scala` = scalaConfigOpt,
         java = Some(BloopConfig.Java(javacOptions)),
         resolution = resolution,
-        dependencies = dependsOn
+        dependencies = baseProject.dependencies ++ dependsOn
       )
   }
 
@@ -167,7 +168,7 @@ object Project {
 
   private def setProjectTestConfig(p: BloopConfig.Project): BloopConfig.Project =
     p.copy(
-      dependencies = List(p.name.stripSuffix("-test")),
+      dependencies = p.dependencies ++ List(p.name.stripSuffix("-test")),
       test = Some(
         BloopConfig.Test(
           frameworks = BloopConfig.TestFramework.DefaultFrameworks,
