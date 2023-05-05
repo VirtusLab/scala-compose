@@ -225,7 +225,7 @@ final class BspImpl(
           persistentLogger,
           localClient,
           maybeRecoverOnError(Scope.Main),
-          projectName = Some(cm.module.projectName),
+          moduleProjectName = Some(cm.module.projectName),
           dependsOn = cm.module.dependsOn,
           workspace = configDir
         )
@@ -244,7 +244,7 @@ final class BspImpl(
           persistentLogger,
           localClient,
           maybeRecoverOnError(Scope.Test),
-          projectName = Some(s"${cm.module.projectName}"),
+          moduleProjectName = Some(cm.module.projectName),
           dependsOn = cm.module.dependsOn,
           workspace = configDir
         )
@@ -290,25 +290,35 @@ final class BspImpl(
     notifyChanges: Boolean,
     reloadableOptions: BspReloadableOptions
   ): Either[(BuildException, Scope), Unit] = {
+
+    val moduleLookup = currentBloopSession.modules.map(m => m.projectName -> m).toMap
+
     def doBuildOnce(
       data: PreBuildData,
       scope: Scope
-    ): Either[(BuildException, Scope), Seq[Build]] = {
-      val eithers = currentBloopSession.modules.map { module =>
-        Build.buildOnce(
-          module.inputs,
-          data.sources,
-          data.generatedSources,
-          data.buildOptions,
-          scope,
-          reloadableOptions.logger,
-          actualLocalClient,
-          currentBloopSession.remoteServer,
-          partialOpt = None
-        ).left.map(_ -> scope)
-      }
-      val (lefts, rights) = eithers.partitionMap(identity)
-      lefts.headOption.toLeft(rights)
+    ): Either[(BuildException, Scope), Build] = {
+
+      // TODO: fix for when compose is not activated
+      val reverseModuleName =
+        if scope == Scope.Test then data.project.projectName.stripSuffix("-test")
+        else data.project.projectName
+
+      val module = moduleLookup(reverseModuleName)
+
+      Build.buildOnce(
+        module.inputs,
+        data.sources,
+        data.generatedSources,
+        data.buildOptions,
+        scope,
+        reloadableOptions.logger,
+        actualLocalClient,
+        currentBloopSession.remoteServer,
+        partialOpt = None,
+        moduleProjectName = Some(module.projectName),
+        dependsOn = data.project.dependsOn,
+        workspace = configDir
+      ).left.map(_ -> scope)
     }
 
     either[(BuildException, Scope)] {

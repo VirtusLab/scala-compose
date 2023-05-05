@@ -40,7 +40,7 @@ trait HasGeneratedSourcesImpl extends HasGeneratedSources {
 
   def newInputs(modules: Seq[Module]): Unit = {
     resetProjectNames()
-    modules.map { module =>
+    modules.foreach { module =>
       val inputs = module.inputs
       setProjectName(inputs.workspace, module.projectName, Scope.Main)
       setProjectName(inputs.workspace, s"${module.projectName}-test", Scope.Test)
