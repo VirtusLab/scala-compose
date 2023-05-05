@@ -463,14 +463,24 @@ final class BspImpl(
         }
 
         doCompile().thenCompose { res =>
+
           def doPostProcess(data: PreBuildData, scope: Scope): Unit =
+
+            val module = configDir match
+              case Some(_) => // TODO: if scala-compose
+                val moduleName =
+                  if scope == Scope.Test then data.project.projectName.stripSuffix("-test")
+                  else data.project.projectName
+                currentBloopSession.modules.find(_.projectName == moduleName).get
+              case None => currentBloopSession.modules.head
+
             for (sv <- data.project.scalaCompiler.map(_.scalaVersion))
               Build.postProcess(
                 data.generatedSources,
-                currentBloopSession.modules.head.inputs.generatedSrcRoot(scope),
+                module.inputs.generatedSrcRoot(scope),
                 data.classesDir,
                 reloadableOptions.logger,
-                currentBloopSession.modules.head.inputs.workspace,
+                configDir.getOrElse(module.inputs.workspace),
                 updateSemanticDbs = true,
                 scalaVersion = sv
               ).left.foreach(_.foreach(showGlobalWarningOnce))
@@ -478,8 +488,10 @@ final class BspImpl(
           if (res.getStatusCode == b.StatusCode.OK)
             CompletableFuture.supplyAsync(
               () =>
-//                doPostProcess(params.mainScope, Scope.Main)
-//                doPostProcess(params.testScope, Scope.Test)
+                params.foreach(param =>
+                  doPostProcess(param.mainScope, Scope.Main)
+                  doPostProcess(param.testScope, Scope.Test)
+                )
                 res,
               executor
             )
