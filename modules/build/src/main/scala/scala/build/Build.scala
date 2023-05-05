@@ -810,8 +810,12 @@ object Build {
 
     val allSources = sources.paths.map(_._1) ++ generatedSources.map(_.generated)
 
-    val workspace   = workspacePath.getOrElse(inputs.workspace)
-    val projectName = projectNameOpt.getOrElse(inputs.projectName)
+    val workspace = workspacePath.getOrElse(inputs.workspace)
+    val projectName =
+      if (scope == Scope.Test)
+        s"${projectNameOpt.getOrElse(inputs.projectName)}-test"
+      else projectNameOpt.getOrElse(inputs.projectName)
+
     val classesDir0 = classesDir(workspace, projectName, scope)
     val scaladocDir = classesDir(workspace, projectName, scope, suffix = "-doc")
 
