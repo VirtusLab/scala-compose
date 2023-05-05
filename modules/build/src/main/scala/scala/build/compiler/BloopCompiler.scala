@@ -37,7 +37,8 @@ final class BloopCompiler(
     @tailrec
     def helper(remainingAttempts: Int): Boolean =
       Bloop.compile(project.projectName, bloopServer.server, logger, buildTargetsTimeout) match {
-        case Right(res) => res
+        case Right(res) =>
+          res
         case Left(ex) =>
           if (remainingAttempts > 1) {
             logger.debug(s"Seems Bloop server exited (got $ex), trying to restart one")
