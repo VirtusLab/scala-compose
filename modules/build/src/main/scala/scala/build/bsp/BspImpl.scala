@@ -254,7 +254,7 @@ final class BspImpl(
           persistentLogger,
           localClient,
           maybeRecoverOnError(Scope.Test),
-          projectName = Some(s"${cm.module.projectName}-test"),
+          projectName = Some(s"${cm.module.projectName}"),
           dependsOn = cm.module.dependsOn,
           workspace = configDir
         )
