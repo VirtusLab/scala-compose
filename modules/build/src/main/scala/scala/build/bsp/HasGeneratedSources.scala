@@ -12,7 +12,7 @@ trait HasGeneratedSources {
   def targetScopeIdOpt(scope: Scope): List[b.BuildTargetIdentifier]
   def setProjectName(workspace: os.Path, name: String, scope: Scope): Unit
   def resetProjectNames(): Unit
-  def newInputs(inputs: Seq[Module]): Unit
+  def newInputs(configDir: Option[os.Path], inputs: Seq[Module]): Unit
   def setGeneratedSources(scope: Scope, sources: Seq[GeneratedSource]): Unit
 }
 

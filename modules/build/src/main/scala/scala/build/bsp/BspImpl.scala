@@ -291,19 +291,21 @@ final class BspImpl(
     reloadableOptions: BspReloadableOptions
   ): Either[(BuildException, Scope), Unit] = {
 
-    val moduleLookup = currentBloopSession.modules.map(m => m.projectName -> m).toMap
+    lazy val moduleLookup = currentBloopSession.modules.map(m => m.projectName -> m).toMap
 
     def doBuildOnce(
       data: PreBuildData,
       scope: Scope
     ): Either[(BuildException, Scope), Build] = {
 
-      // TODO: fix for when compose is not activated
-      val reverseModuleName =
-        if scope == Scope.Test then data.project.projectName.stripSuffix("-test")
-        else data.project.projectName
-
-      val module = moduleLookup(reverseModuleName)
+      val module = configDir match
+        case Some(_) => // TODO: if scala-compose
+          val reverseModuleName =
+            if scope == Scope.Test then data.project.projectName.stripSuffix("-test")
+            else data.project.projectName
+          moduleLookup(reverseModuleName)
+        case None =>
+          currentBloopSession.modules.head
 
       Build.buildOnce(
         module.inputs,
@@ -389,9 +391,11 @@ final class BspImpl(
       () =>
         prepareBuild(currentBloopSession, reloadableOptions) match {
           case Right(preBuilds) =>
-            preBuilds.foreach { preBuild =>
-              if (preBuild.mainScope.buildChanged || preBuild.testScope.buildChanged)
-                notifyBuildChange(currentBloopSession)
+            val someChange = preBuilds.exists(preBuild =>
+              preBuild.mainScope.buildChanged || preBuild.testScope.buildChanged
+            )
+            if (someChange) {
+              notifyBuildChange(currentBloopSession)
             }
             Right(preBuilds)
           case Left((ex, scope)) =>
@@ -531,7 +535,7 @@ final class BspImpl(
           "scala-cli",
           Constants.version,
           (configDir.getOrElse(inputs.head.inputs.workspace) / Constants.workspaceDirName).toNIO,
-          Build.classesRootDir(inputs.head.inputs.workspace, inputs.head.projectName).toNIO,
+          Build.classesRootDir(configDir.getOrElse(inputs.head.inputs.workspace), inputs.head.projectName).toNIO,
           localClient,
           threads.buildThreads.bloop,
           logger.bloopRifleLogger
@@ -558,7 +562,7 @@ final class BspImpl(
     lazy val bloopSession0: BloopSession = BloopSession(inputs, remoteServer, bspServer, watcher)
 
     bloopSession0.registerWatchInputs()
-    bspServer.newInputs(inputs)
+    bspServer.newInputs(configDir, inputs)
 
     bloopSession0
   }
@@ -611,7 +615,7 @@ final class BspImpl(
     actualLocalServer.onConnectWithClient(actualLocalClient)
 
     localClient.onConnectWithServer(currentBloopSession.remoteServer.bloopServer.server)
-    actualLocalClient.newInputs(initialInputs)
+    actualLocalClient.newInputs(configDir, initialInputs)
     currentBloopSession.resetDiagnostics(actualLocalClient)
 
     val recoverOnError: Scope => BuildException => Option[BuildException] = scope =>
@@ -689,7 +693,7 @@ final class BspImpl(
     val newBloopSession0  = newBloopSession(newInputs, reloadableOptions, wasIntelliJ)
     bloopSession.update(currentBloopSession, newBloopSession0, "Concurrent reload of workspace")
     currentBloopSession.dispose()
-    actualLocalClient.newInputs(newInputs)
+    actualLocalClient.newInputs(configDir, newInputs)
     localClient.onConnectWithServer(newBloopSession0.remoteServer.bloopServer.server)
 
     newBloopSession0.resetDiagnostics(actualLocalClient)
