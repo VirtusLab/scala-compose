@@ -107,6 +107,6 @@ class BuildServerProxy(
     bspServer().setProjectName(workspace, name, scope)
   def resetProjectNames(): Unit =
     bspServer().resetProjectNames()
-  def newInputs(inputs: Seq[Module]): Unit =
-    bspServer().newInputs(inputs)
+  def newInputs(configDir: Option[os.Path], inputs: Seq[Module]): Unit =
+    bspServer().newInputs(configDir, inputs)
 }

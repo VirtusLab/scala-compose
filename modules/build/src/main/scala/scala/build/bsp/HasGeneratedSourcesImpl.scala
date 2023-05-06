@@ -38,12 +38,12 @@ trait HasGeneratedSourcesImpl extends HasGeneratedSources {
       projectNames.get(scope).toList.flatten ++ Seq(ProjectName(workspace, name))
   }
 
-  def newInputs(modules: Seq[Module]): Unit = {
+  def newInputs(configDir: Option[os.Path], modules: Seq[Module]): Unit = {
     resetProjectNames()
     modules.foreach { module =>
-      val inputs = module.inputs
-      setProjectName(inputs.workspace, module.projectName, Scope.Main)
-      setProjectName(inputs.workspace, s"${module.projectName}-test", Scope.Test)
+      val workspace = configDir.getOrElse(module.inputs.workspace)
+      setProjectName(workspace, module.projectName, Scope.Main)
+      setProjectName(workspace, s"${module.projectName}-test", Scope.Test)
     }
   }
 

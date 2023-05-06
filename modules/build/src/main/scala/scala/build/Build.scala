@@ -861,19 +861,19 @@ object Build {
                 "-Yrangepos",
                 "-P:semanticdb:failures:warning",
                 "-P:semanticdb:synthetics:on",
-                s"-P:semanticdb:sourceroot:${inputs.workspace}"
+                s"-P:semanticdb:sourceroot:${workspace}"
               ).map(ScalacOpt(_))
             else
               Seq(
                 "-Xsemanticdb",
                 "-sourceroot",
-                inputs.workspace.toString
+                workspace.toString
               ).map(ScalacOpt(_))
           else Nil
 
         val sourceRootScalacOptions =
           if (params.scalaVersion.startsWith("2.")) Nil
-          else Seq("-sourceroot", inputs.workspace.toString).map(ScalacOpt(_))
+          else Seq("-sourceroot", workspace.toString).map(ScalacOpt(_))
 
         val scalaJsScalacOptions =
           if (options.platform.value == Platform.JS && !params.scalaVersion.startsWith("2."))
@@ -936,7 +936,7 @@ object Build {
 
           Seq(
             // does the path need to be escaped somehow?
-            s"-Xplugin:semanticdb -sourceroot:${inputs.workspace} -targetroot:javac-classes-directory"
+            s"-Xplugin:semanticdb -sourceroot:${workspace} -targetroot:javac-classes-directory"
           ) ++ exports
         }
         else
