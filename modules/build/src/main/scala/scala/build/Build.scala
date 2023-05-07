@@ -813,7 +813,7 @@ object Build {
     val workspace = workspacePath.getOrElse(inputs.workspace)
     val projectName =
       if (scope == Scope.Test)
-        moduleProjectName.map(_ + "-test").getOrElse(inputs.projectName)
+        moduleProjectName.getOrElse(inputs.projectName) + "-test"
       else moduleProjectName.getOrElse(inputs.projectName)
 
     val classesDir0 = classesDir(workspace, projectName, scope)
