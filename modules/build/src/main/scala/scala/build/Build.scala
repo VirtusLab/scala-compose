@@ -829,13 +829,15 @@ object Build {
     val allSources = sources.paths.map(_._1) ++ generatedSources.map(_.generated)
 
     val workspace = workspacePath.getOrElse(inputs.workspace)
-    val projectName =
-      if (scope == Scope.Test)
-        moduleProjectName.getOrElse(inputs.projectName) + "-test"
-      else moduleProjectName.getOrElse(inputs.projectName)
 
-    val classesDir0 = classesDir(workspace, projectName, scope)
-    val scaladocDir = classesDir(workspace, projectName, scope, suffix = "-doc")
+    val mainProjectName = moduleProjectName.getOrElse(inputs.projectName)
+    val scopedProjectName =
+      moduleProjectName
+        .map(name => if scope == Scope.Main then name else s"$name-${scope.name}")
+        .getOrElse(inputs.scopeProjectName(scope))
+
+    val classesDir0 = classesDir(workspace, mainProjectName, scope)
+    val scaladocDir = classesDir(workspace, mainProjectName, scope, suffix = "-doc")
 
     val generateSemanticDbs = options.scalaOptions.generateSemanticDbs.getOrElse(false)
 
@@ -861,7 +863,7 @@ object Build {
                 "-Yrangepos",
                 "-P:semanticdb:failures:warning",
                 "-P:semanticdb:synthetics:on",
-                s"-P:semanticdb:sourceroot:${workspace}"
+                s"-P:semanticdb:sourceroot:$workspace"
               ).map(ScalacOpt(_))
             else
               Seq(
@@ -936,7 +938,7 @@ object Build {
 
           Seq(
             // does the path need to be escaped somehow?
-            s"-Xplugin:semanticdb -sourceroot:${workspace} -targetroot:javac-classes-directory"
+            s"-Xplugin:semanticdb -sourceroot:$workspace -targetroot:javac-classes-directory"
           ) ++ exports
         }
         else
@@ -949,10 +951,8 @@ object Build {
 
     // `test` scope should contains class path to main scope
     val mainClassesPath =
-      if (scope == Scope.Test) {
-        val mainProjectName = moduleProjectName.getOrElse(inputs.projectName)
+      if (scope == Scope.Test)
         List(classesDir(workspace, mainProjectName, Scope.Main))
-      }
       else Nil
 
     value(validate(logger, options))
@@ -975,7 +975,7 @@ object Build {
         if (options.platform.value == Platform.Native)
           Some(options.scalaNativeOptions.bloopConfig())
         else None,
-      projectName = projectName,
+      projectName = scopedProjectName,
       classPath = fullClassPath,
       resolution = Some(Project.resolution(artifacts.detailedArtifacts)),
       sources = allSources,
@@ -1025,8 +1025,7 @@ object Build {
       buildClient.setProjectParams(scopeParams ++ value(options0.projectParams))
 
       val classesDir0 = (workspace, moduleProjectName) match
-        case (Some(configDir), Some(projectN)) =>
-          classesDir(configDir, if scope == Scope.Test then s"$projectN-test" else projectN, scope)
+        case (Some(configDir), Some(projectN)) => classesDir(configDir, projectN, scope)
         case _ => classesDir(inputs.workspace, inputs.projectName, scope)
 
       val artifacts = value(options0.artifacts(logger, scope, maybeRecoverOnError))

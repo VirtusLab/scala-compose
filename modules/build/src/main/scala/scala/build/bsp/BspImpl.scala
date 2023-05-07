@@ -404,9 +404,8 @@ final class BspImpl(
             val someChange = preBuilds.exists(preBuild =>
               preBuild.mainScope.buildChanged || preBuild.testScope.buildChanged
             )
-            if (someChange) {
+            if (someChange)
               notifyBuildChange(currentBloopSession)
-            }
             Right(preBuilds)
           case Left((ex, scope)) =>
             Left((ex, scope))
@@ -496,7 +495,8 @@ final class BspImpl(
                   doPostProcess(param.mainScope, Scope.Main)
                   doPostProcess(param.testScope, Scope.Test)
                 )
-                res,
+                res
+              ,
               executor
             )
           else
@@ -545,7 +545,10 @@ final class BspImpl(
           "scala-cli",
           Constants.version,
           (configDir.getOrElse(inputs.head.inputs.workspace) / Constants.workspaceDirName).toNIO,
-          Build.classesRootDir(configDir.getOrElse(inputs.head.inputs.workspace), inputs.head.projectName).toNIO,
+          Build.classesRootDir(
+            configDir.getOrElse(inputs.head.inputs.workspace),
+            inputs.head.projectName
+          ).toNIO,
           localClient,
           threads.buildThreads.bloop,
           logger.bloopRifleLogger
@@ -791,15 +794,17 @@ final class BspImpl(
           }
         }
         val newInputs = value(argsToInputs(ideInputs.args))
-        val noChanges = newInputs.lazyZip(currentBloopSession.modules).forall { (oldModule, module) => // TODO: what if order changed?
-          val newHash = module.inputs.sourceHash()
-          val previousInputs = oldModule.inputs
-          val previousHash = oldModule.inputsHash
-          newInputs == previousInputs && newHash == previousHash
+        val noChanges = newInputs.lazyZip(currentBloopSession.modules).forall {
+          (oldModule, module) => // TODO: what if order changed?
+            val newHash        = module.inputs.sourceHash()
+            val previousInputs = oldModule.inputs
+            val previousHash   = oldModule.inputsHash
+            newInputs == previousInputs && newHash == previousHash
         }
         if noChanges then
           CompletableFuture.completedFuture(new Object)
-        else reloadBsp(currentBloopSession, currentBloopSession.modules, newInputs, reloadableOptions)
+        else
+          reloadBsp(currentBloopSession, currentBloopSession.modules, newInputs, reloadableOptions)
       }
       maybeResponse match {
         case Left(errorMessage) =>
