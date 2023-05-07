@@ -751,9 +751,9 @@ final class BspImpl(
           }
           else newBloopSession0
 
-        val anyChanges = previousInputs.lazyZip(preBuildProjects).exists { (previousInput, preBuild) =>
-          previousInput.projectName != preBuild.mainScope.project.projectName
-        }
+        val previousNames = previousInputs.map(_.projectName).toSet
+        val currentNames  = preBuildProjects.map(_.mainScope.project.projectName).toSet
+        val anyChanges    = previousNames != currentNames
         if (anyChanges)
           for (client <- finalBloopSession.bspServer.clientOpt) {
             val newTargetIds = finalBloopSession.bspServer.targetIds
@@ -781,8 +781,9 @@ final class BspImpl(
     val verbosity         = reloadableOptions.verbosity
     actualLocalClient.logger = logger
     localClient = getLocalClient(verbosity)
+    val workspace = configDir.getOrElse(currentBloopSession.modules.head.inputs.workspace)
     val ideInputsJsonPath =
-      currentBloopSession.modules.head.inputs.workspace / Constants.workspaceDirName / "ide-inputs.json"
+      workspace / Constants.workspaceDirName / "ide-inputs.json"
     if (os.isFile(ideInputsJsonPath)) {
       val maybeResponse = either[BuildException] {
         val ideInputs = value {
@@ -793,18 +794,29 @@ final class BspImpl(
               Left(new ParsingInputsException(e.getMessage, e))
           }
         }
-        val newInputs = value(argsToInputs(ideInputs.args))
-        val noChanges = newInputs.lazyZip(currentBloopSession.modules).forall {
-          (oldModule, module) => // TODO: what if order changed?
-            val newHash        = module.inputs.sourceHash()
-            val previousInputs = oldModule.inputs
-            val previousHash   = oldModule.inputsHash
-            newInputs == previousInputs && newHash == previousHash
+        val newModules = value(argsToInputs(ideInputs.args))
+        val sameCount  = currentBloopSession.modules.sizeCompare(newModules) == 0
+        def previousModulesSorted =
+          val previousModules = currentBloopSession.modules
+          if previousModules.sizeIs == 1 then previousModules
+          else previousModules.sortBy(_.projectName)
+        def newModulesSorted =
+          if newModules.sizeIs == 1 then newModules else newModules.sortBy(_.projectName)
+
+        val noChanges = sameCount && previousModulesSorted.lazyZip(newModulesSorted).forall {
+          (previousModule, newModule) =>
+            previousModule.projectName == newModule.projectName && {
+              val newInputs      = newModule.inputs
+              val newHash        = newModule.inputs.sourceHash()
+              val previousInputs = previousModule.inputs
+              val previousHash   = previousModule.inputsHash
+              newInputs == previousInputs && newHash == previousHash
+            }
         }
         if noChanges then
           CompletableFuture.completedFuture(new Object)
         else
-          reloadBsp(currentBloopSession, currentBloopSession.modules, newInputs, reloadableOptions)
+          reloadBsp(currentBloopSession, currentBloopSession.modules, newModules, reloadableOptions)
       }
       maybeResponse match {
         case Left(errorMessage) =>
