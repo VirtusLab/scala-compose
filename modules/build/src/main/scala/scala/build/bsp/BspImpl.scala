@@ -235,7 +235,7 @@ final class BspImpl(
           persistentLogger,
           localClient,
           maybeRecoverOnError(Scope.Main),
-          moduleProjectName = Some(cm.module.projectName),
+          moduleProjectName = configDir.map(_ => cm.module.projectName),
           dependsOn = cm.module.dependsOn,
           workspace = configDir
         )
@@ -254,7 +254,7 @@ final class BspImpl(
           persistentLogger,
           localClient,
           maybeRecoverOnError(Scope.Test),
-          moduleProjectName = Some(cm.module.projectName),
+          moduleProjectName = configDir.map(_ => cm.module.projectName),
           dependsOn = cm.module.dependsOn,
           workspace = configDir
         )
@@ -327,8 +327,8 @@ final class BspImpl(
         actualLocalClient,
         currentBloopSession.remoteServer,
         partialOpt = None,
-        moduleProjectName = Some(module.projectName),
-        dependsOn = data.project.dependsOn,
+        moduleProjectName = configDir.map(_ => module.projectName),
+        dependsOn = module.dependsOn,
         workspace = configDir
       ).left.map(_ -> scope)
     }
@@ -795,9 +795,9 @@ final class BspImpl(
           }
         }
         val newModules = value(argsToInputs(ideInputs.args))
-        val sameCount  = currentBloopSession.modules.sizeCompare(newModules) == 0
+        val previousModules = currentBloopSession.modules
+        val sameCount  = previousModules.sizeCompare(newModules) == 0
         def previousModulesSorted =
-          val previousModules = currentBloopSession.modules
           if previousModules.sizeIs == 1 then previousModules
           else previousModules.sortBy(_.projectName)
         def newModulesSorted =
@@ -807,7 +807,7 @@ final class BspImpl(
           (previousModule, newModule) =>
             previousModule.projectName == newModule.projectName && {
               val newInputs      = newModule.inputs
-              val newHash        = newModule.inputs.sourceHash()
+              val newHash        = newModule.inputsHash
               val previousInputs = previousModule.inputs
               val previousHash   = previousModule.inputsHash
               newInputs == previousInputs && newHash == previousHash
@@ -816,7 +816,7 @@ final class BspImpl(
         if noChanges then
           CompletableFuture.completedFuture(new Object)
         else
-          reloadBsp(currentBloopSession, currentBloopSession.modules, newModules, reloadableOptions)
+          reloadBsp(currentBloopSession, previousModules, newModules, reloadableOptions)
       }
       maybeResponse match {
         case Left(errorMessage) =>

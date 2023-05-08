@@ -116,7 +116,7 @@ object Bsp extends ScalaCommand[BspOptions] {
       )
     }
 
-    CurrentParams.workspaceOpt = Some(inputs.workspace)
+    CurrentParams.workspaceOpt = Some(inputs.head.inputs.workspace)
     val actionableDiagnostics =
       options.shared.logging.verbosityOptions.actions
 

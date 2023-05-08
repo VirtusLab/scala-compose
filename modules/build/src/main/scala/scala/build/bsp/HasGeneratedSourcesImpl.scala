@@ -71,6 +71,6 @@ trait HasGeneratedSourcesImpl extends HasGeneratedSources {
         scope
     }
   protected def validTarget(id: b.BuildTargetIdentifier): Boolean =
-    true
+    targetScopeOpt(id).nonEmpty
 
 }
