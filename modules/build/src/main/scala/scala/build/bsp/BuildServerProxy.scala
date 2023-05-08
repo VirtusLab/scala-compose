@@ -104,6 +104,8 @@ class BuildServerProxy(
   def targetIds: List[b.BuildTargetIdentifier] = bspServer().targetIds
   def targetScopeIdOpt(scope: Scope): List[b.BuildTargetIdentifier] =
     bspServer().targetScopeIdOpt(scope)
+  def projectScopeNames(scope: Scope): List[(String, b.BuildTargetIdentifier)] =
+    bspServer().projectScopeNames(scope)
   def setGeneratedSources(scope: Scope, sources: Seq[GeneratedSource]): Unit =
     bspServer().setGeneratedSources(scope, sources)
   def setProjectName(workspace: os.Path, name: String, scope: Scope): Unit =

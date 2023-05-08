@@ -448,11 +448,12 @@ final class BspImpl(
         for (targetId <- currentBloopSession.bspServer.targetIds)
           actualLocalClient.resetBuildExceptionDiagnostics(targetId)
 
-        val targetIds = currentBloopSession.bspServer.targetIds // TODO: handle multiple targets
-        targetIds.foreach { targetId =>
-          params.foreach { param =>
-            actualLocalClient.reportDiagnosticsForFiles(targetId, param.diagnostics, reset = false)
-          }
+        val mainTargetIds =
+          currentBloopSession.bspServer.projectScopeNames(Scope.Main).toMap
+
+        params.foreach { param =>
+          val targetId = mainTargetIds(param.mainScope.project.projectName)
+          actualLocalClient.reportDiagnosticsForFiles(targetId, param.diagnostics, reset = false)
         }
 
         doCompile().thenCompose { res =>
@@ -751,9 +752,9 @@ final class BspImpl(
               Left(new ParsingInputsException(e.getMessage, e))
           }
         }
-        val newModules = value(argsToInputs(ideInputs.args))
+        val newModules      = value(argsToInputs(ideInputs.args))
         val previousModules = currentBloopSession.modules
-        val sameCount  = previousModules.sizeCompare(newModules) == 0
+        val sameCount       = previousModules.sizeCompare(newModules) == 0
         def previousModulesSorted =
           if previousModules.sizeIs == 1 then previousModules
           else previousModules.sortBy(_.projectName)
