@@ -802,13 +802,24 @@ object Build {
     scope: Scope,
     logger: Logger,
     artifacts: Artifacts,
-    maybeRecoverOnError: BuildException => Option[BuildException] = e => Some(e)
+    maybeRecoverOnError: BuildException => Option[BuildException] = e => Some(e),
+    moduleProjectName: Option[String] = None,
+    dependsOn: List[String] = Nil,
+    workspacePath: Option[os.Path] = None
   ): Either[BuildException, Project] = either {
 
     val allSources = sources.paths.map(_._1) ++ generatedSources.map(_.generated)
 
-    val classesDir0 = classesDir(inputs.workspace, inputs.projectName, scope)
-    val scaladocDir = classesDir(inputs.workspace, inputs.projectName, scope, suffix = "-doc")
+    val workspace = workspacePath.getOrElse(inputs.workspace)
+
+    val mainProjectName = moduleProjectName.getOrElse(inputs.projectName)
+    val scopedProjectName =
+      moduleProjectName
+        .map(name => if scope == Scope.Main then name else s"$name-${scope.name}")
+        .getOrElse(inputs.scopeProjectName(scope))
+
+    val classesDir0 = classesDir(workspace, mainProjectName, scope)
+    val scaladocDir = classesDir(workspace, mainProjectName, scope, suffix = "-doc")
 
     val generateSemanticDbs = options.scalaOptions.generateSemanticDbs.getOrElse(false)
 
@@ -834,19 +845,19 @@ object Build {
                 "-Yrangepos",
                 "-P:semanticdb:failures:warning",
                 "-P:semanticdb:synthetics:on",
-                s"-P:semanticdb:sourceroot:${inputs.workspace}"
+                s"-P:semanticdb:sourceroot:$workspace"
               ).map(ScalacOpt(_))
             else
               Seq(
                 "-Xsemanticdb",
                 "-sourceroot",
-                inputs.workspace.toString
+                workspace.toString
               ).map(ScalacOpt(_))
           else Nil
 
         val sourceRootScalacOptions =
           if (params.scalaVersion.startsWith("2.")) Nil
-          else Seq("-sourceroot", inputs.workspace.toString).map(ScalacOpt(_))
+          else Seq("-sourceroot", workspace.toString).map(ScalacOpt(_))
 
         val scalaJsScalacOptions =
           if (options.platform.value == Platform.JS && !params.scalaVersion.startsWith("2."))
@@ -909,7 +920,7 @@ object Build {
 
           Seq(
             // does the path need to be escaped somehow?
-            s"-Xplugin:semanticdb -sourceroot:${inputs.workspace} -targetroot:javac-classes-directory"
+            s"-Xplugin:semanticdb -sourceroot:$workspace -targetroot:javac-classes-directory"
           ) ++ exports
         }
         else
@@ -923,7 +934,7 @@ object Build {
     // `test` scope should contains class path to main scope
     val mainClassesPath =
       if (scope == Scope.Test)
-        List(classesDir(inputs.workspace, inputs.projectName, Scope.Main))
+        List(classesDir(workspace, mainProjectName, Scope.Main))
       else Nil
 
     value(validate(logger, options))
@@ -934,8 +945,8 @@ object Build {
       artifacts.extraJavacPlugins
 
     val project = Project(
-      directory = inputs.workspace / Constants.workspaceDirName,
-      workspace = inputs.workspace,
+      directory = workspace / Constants.workspaceDirName,
+      workspace = workspace,
       classesDir = classesDir0,
       scaladocDir = scaladocDir,
       scalaCompiler = scalaCompilerParamsOpt,
@@ -946,14 +957,15 @@ object Build {
         if (options.platform.value == Platform.Native)
           Some(options.scalaNativeOptions.bloopConfig())
         else None,
-      projectName = inputs.scopeProjectName(scope),
+      projectName = scopedProjectName,
       classPath = fullClassPath,
       resolution = Some(Project.resolution(artifacts.detailedArtifacts)),
       sources = allSources,
       resourceDirs = sources.resourceDirs,
       scope = scope,
       javaHomeOpt = Option(options.javaHomeLocation().value),
-      javacOptions = javacOptions
+      javacOptions = javacOptions,
+      dependsOn = dependsOn
     )
     project
   }
@@ -968,7 +980,10 @@ object Build {
     compiler: ScalaCompiler,
     logger: Logger,
     buildClient: BloopBuildClient,
-    maybeRecoverOnError: BuildException => Option[BuildException] = e => Some(e)
+    maybeRecoverOnError: BuildException => Option[BuildException] = e => Some(e),
+    moduleProjectName: Option[String] = None,
+    dependsOn: List[String] = Nil,
+    workspace: Option[os.Path] = None
   ): Either[BuildException, (os.Path, Option[ScalaParameters], Artifacts, Project, Boolean)] =
     either {
 
@@ -991,7 +1006,9 @@ object Build {
 
       buildClient.setProjectParams(scopeParams ++ value(options0.projectParams))
 
-      val classesDir0 = classesDir(inputs.workspace, inputs.projectName, scope)
+      val classesDir0 = (workspace, moduleProjectName) match
+        case (Some(configDir), Some(projectN)) => classesDir(configDir, projectN, scope)
+        case _ => classesDir(inputs.workspace, inputs.projectName, scope)
 
       val artifacts = value(options0.artifacts(logger, scope, maybeRecoverOnError))
 
@@ -1007,7 +1024,10 @@ object Build {
           scope,
           logger,
           artifacts,
-          maybeRecoverOnError
+          maybeRecoverOnError,
+          moduleProjectName = moduleProjectName,
+          dependsOn,
+          workspace
         )
       }
 
@@ -1037,7 +1057,10 @@ object Build {
     logger: Logger,
     buildClient: BloopBuildClient,
     compiler: ScalaCompiler,
-    partialOpt: Option[Boolean]
+    partialOpt: Option[Boolean],
+    moduleProjectName: Option[String] = None,
+    dependsOn: List[String] = Nil,
+    workspace: Option[os.Path] = None
   ): Either[BuildException, Build] = either {
 
     if (options.platform.value == Platform.Native)
@@ -1056,7 +1079,10 @@ object Build {
         scope,
         compiler,
         logger,
-        buildClient
+        buildClient,
+        dependsOn = dependsOn,
+        moduleProjectName = moduleProjectName,
+        workspace = workspace
       )
     }
 

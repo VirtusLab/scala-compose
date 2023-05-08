@@ -688,7 +688,7 @@ trait ScalaCompose extends SbtModule with ProtoBuildModule with CliLaunchers
     Deps.tomlScala, // TODO: fork?
     Deps.osLib,
     Deps.upickle, // TODO, use jsoniter
-    Deps.munit,
+    Deps.munit
   )
   def compileIvyDeps = super.compileIvyDeps() ++ Agg(
     Deps.jsoniterMacros,
@@ -1283,6 +1283,7 @@ def uploadLaunchers(directory: String = "artifacts") = T.command {
 def unitTests() = T.command {
   `build-module`.test.test()()
   `build-macros`.test.test()()
+  `scala-compose`.test.test()()
   cli.test.test()()
   directives.test.test()()
   options.test.test()()

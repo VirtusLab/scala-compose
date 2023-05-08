@@ -3,6 +3,7 @@ package scala.build
 import scala.build.EitherCps.{either, value}
 import scala.build.Ops.*
 import scala.build.Positioned
+import scala.build.bsp.CrossModule
 import scala.build.errors.{BuildException, CompositeBuildException, MalformedDirectiveError}
 import scala.build.input.ElementsUtils.*
 import scala.build.input.*
@@ -190,6 +191,7 @@ object CrossSources {
       else fromDirectives
     }
 
+    // TODO: merge with buildOptions of dependencies before making the scopedSources
     val buildOptions = for {
       s   <- preprocessedSources
       opt <- s.options.toSeq

@@ -102,14 +102,16 @@ class BuildServerProxy(
     bspServer().jvmTestEnvironment(params)
 
   def targetIds: List[b.BuildTargetIdentifier] = bspServer().targetIds
-  def targetScopeIdOpt(scope: Scope): Option[b.BuildTargetIdentifier] =
+  def targetScopeIdOpt(scope: Scope): List[b.BuildTargetIdentifier] =
     bspServer().targetScopeIdOpt(scope)
+  def projectScopeNames(scope: Scope): List[(String, b.BuildTargetIdentifier)] =
+    bspServer().projectScopeNames(scope)
   def setGeneratedSources(scope: Scope, sources: Seq[GeneratedSource]): Unit =
     bspServer().setGeneratedSources(scope, sources)
   def setProjectName(workspace: os.Path, name: String, scope: Scope): Unit =
     bspServer().setProjectName(workspace, name, scope)
   def resetProjectNames(): Unit =
     bspServer().resetProjectNames()
-  def newInputs(inputs: Inputs): Unit =
-    bspServer().newInputs(inputs)
+  def newInputs(configDir: Option[os.Path], inputs: Seq[Module]): Unit =
+    bspServer().newInputs(configDir, inputs)
 }

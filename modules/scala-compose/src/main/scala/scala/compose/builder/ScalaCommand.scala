@@ -1,8 +1,10 @@
 package scala.compose.builder
 
 import os.Shellable
-import scala.compose.builder.errors.*
+
 import java.io.IOException
+
+import scala.compose.builder.errors.*
 
 object ScalaCommand:
 
@@ -52,7 +54,9 @@ object ScalaCommand:
         case PlatformKind.`scala-js`     => "--js" :: Nil
         case PlatformKind.`scala-native` => "--native" :: Nil
     List(
-      "scala",
+      "scala-cli",
+      "--cli-version",
+      "nightly",
       subcommand.commandString(module)(
         List(
           if classpath.nonEmpty then "--classpath" :: classpath.mkString(":") :: Nil else Nil,

@@ -27,7 +27,8 @@ final case class Project(
   resourceDirs: Seq[os.Path],
   javaHomeOpt: Option[os.Path],
   scope: Scope,
-  javacOptions: List[String]
+  javacOptions: List[String],
+  dependsOn: List[String]
 ) {
 
   import Project._
@@ -50,23 +51,25 @@ final case class Project(
         jars = scalaCompiler0.compilerClassPath.map(_.toNIO).toList
       )
     }
-    baseBloopProject(
+    val baseProject = baseBloopProject(
       projectName,
       directory.toNIO,
       (directory / ".bloop" / projectName).toNIO,
       classesDir.toNIO,
       scope
     )
-      .copy(
-        workspaceDir = Some(workspace.toNIO),
-        classpath = classPath.map(_.toNIO).toList,
-        sources = sources.iterator.map(_.toNIO).toList,
-        resources = Some(resourceDirs).filter(_.nonEmpty).map(_.iterator.map(_.toNIO).toList),
-        platform = Some(platform),
-        `scala` = scalaConfigOpt,
-        java = Some(BloopConfig.Java(javacOptions)),
-        resolution = resolution
-      )
+
+    baseProject.copy(
+      workspaceDir = Some(workspace.toNIO),
+      classpath = classPath.map(_.toNIO).toList,
+      sources = sources.iterator.map(_.toNIO).toList,
+      resources = Some(resourceDirs).filter(_.nonEmpty).map(_.iterator.map(_.toNIO).toList),
+      platform = Some(platform),
+      `scala` = scalaConfigOpt,
+      java = Some(BloopConfig.Java(javacOptions)),
+      resolution = resolution,
+      dependencies = baseProject.dependencies ++ dependsOn
+    )
   }
 
   def bloopFile: BloopConfig.File =
@@ -165,7 +168,7 @@ object Project {
 
   private def setProjectTestConfig(p: BloopConfig.Project): BloopConfig.Project =
     p.copy(
-      dependencies = List(p.name.stripSuffix("-test")),
+      dependencies = p.dependencies ++ List(p.name.stripSuffix("-test")),
       test = Some(
         BloopConfig.Test(
           frameworks = BloopConfig.TestFramework.DefaultFrameworks,
