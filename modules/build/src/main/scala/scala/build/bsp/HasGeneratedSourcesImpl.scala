@@ -31,6 +31,13 @@ trait HasGeneratedSourcesImpl extends HasGeneratedSources {
       .flatMap(_.targetUriOpt)
       .map(uri => new b.BuildTargetIdentifier(uri))
 
+  def projectScopeNames(scope: Scope): List[(String, b.BuildTargetIdentifier)] =
+    projectNames
+      .get(scope)
+      .toList
+      .flatten
+      .flatMap(pn => pn.targetUriOpt.map(uri => pn.name -> new b.BuildTargetIdentifier(uri)))
+
   def resetProjectNames(): Unit =
     projectNames.clear()
   def setProjectName(workspace: os.Path, name: String, scope: Scope): Unit = {
