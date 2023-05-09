@@ -31,13 +31,13 @@ object Bsp extends ScalaCommand[BspOptions] {
     Option(latestSharedOptions(options))
 
   // not reusing buildOptions here, since they should be reloaded live instead
-  override def runCommand(options: BspOptions, args: RemainingArgs, logger: Logger): Unit = Result {
+  override def runCommand(options: BspOptions, args: RemainingArgs, logger: Logger): Unit = {
 
     val getSharedOptions: () => SharedOptions = () => latestSharedOptions(options)
     val configDir                             = os.Path(options.confDir, Os.pwd)
 
-    val argsToInputs: (Module, Seq[String]) => Either[BuildException, Inputs] =
-      (module, argsSeq) =>
+    val argsToInputs: Seq[String] => Either[BuildException, Inputs] =
+      argsSeq =>
         either {
           val sharedOptions = getSharedOptions()
           val initialInputs = value(sharedOptions.inputs(argsSeq, () => Inputs.default()))
@@ -78,32 +78,37 @@ object Bsp extends ScalaCommand[BspOptions] {
     val actionableDiagnostics =
       options.shared.logging.verbosityOptions.actions
 
-    val config: Config = Settings(false, false, parseConfig(Some(configDir)).?).config
-    val modules: Seq[scala.build.bsp.Module] =
-      val ms =
-        for
-          (_, m) <- config.modules.iterator
-        yield
-          val inputsRaw = Seq((configDir / m.root).toString())
+    class ScalaComposeException(msg: String) extends BuildException(msg)
 
-          val inputs = argsToInputs(
-            m,
-            inputsRaw
-          ).getOrElse(sys.error(s"Failed to parse inputs: ${m.root}"))
-
-          scala.build.bsp.Module(
-            inputs,
-            inputs.sourceHash(),
-            m.name,
-            m.dependsOn,
-            m.platforms.map(_.toString)
-          )
-        end for
-      ms.toSeq
-    end modules
+    extension [V](res: Result[V, String])
+      private def asBuildFailure = res.toEither.left.map(ScalaComposeException(_))
 
     val argsToInputsModule: Seq[String] => Either[BuildException, Seq[scala.build.bsp.Module]] =
-      _ => Right(modules)
+      _ =>
+        either {
+          val configLocation = value(configFile(Some(configDir)).asBuildFailure)
+          val config: Config = value(parseConfig(configLocation).asBuildFailure)
+          val ms =
+            for
+              (_, m) <- config.modules.iterator
+            yield
+              val inputsRaw = Seq((configDir / m.root).toString())
+
+              val inputs = value(argsToInputs(inputsRaw))
+
+              scala.build.bsp.Module(
+                inputs,
+                inputs.sourceHash(),
+                m.name,
+                m.dependsOn,
+                m.platforms.map(_.toString)
+              )
+            end for
+          end ms
+          ms.toSeq
+        }
+
+    val modules = argsToInputsModule(Seq()).orExit(logger)
 
     BspThreads.withThreads { threads =>
       val bsp = scala.build.bsp.Bsp.create(
