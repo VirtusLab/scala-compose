@@ -83,7 +83,8 @@ object Bsp extends ScalaCommand[BspOptions] {
             inputs0.sourceHash(),
             inputs0.projectName,
             dependsOn = Nil,
-            platforms = Nil
+            platforms = Nil,
+            resourceGenerators = Nil
           )) -> finalBuildOptions
         }
 
