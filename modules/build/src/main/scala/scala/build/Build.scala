@@ -466,6 +466,8 @@ object Build {
     }
   }
 
+  def resourcesRootDir(root: os.Path, projectName: String): os.Path =
+    root / Constants.workspaceDirName / projectName / "managed-resources"
   def classesRootDir(root: os.Path, projectName: String): os.Path =
     root / Constants.workspaceDirName / projectName / "classes"
   def classesDir(root: os.Path, projectName: String, scope: Scope, suffix: String = ""): os.Path =
@@ -771,6 +773,8 @@ object Build {
       Some(javaHome.value.version)
   }
 
+  case class ResourceGenerator(module: String, inputDir: os.Path, outputDir: os.Path)
+
   /** Builds a Bloop project.
     *
     * @param inputs
@@ -1007,8 +1011,10 @@ object Build {
       buildClient.setProjectParams(scopeParams ++ value(options0.projectParams))
 
       val classesDir0 = (workspace, moduleProjectName) match
-        case (Some(configDir), Some(projectN)) => classesDir(configDir, projectN, scope)
-        case _ => classesDir(inputs.workspace, inputs.projectName, scope)
+        case (Some(configDir), Some(projectN)) =>
+          classesDir(configDir, projectN, scope)
+        case _ =>
+          classesDir(inputs.workspace, inputs.projectName, scope)
 
       val artifacts = value(options0.artifacts(logger, scope, maybeRecoverOnError))
 

@@ -16,6 +16,7 @@ import scala.cli.commands.publish.ConfigUtil.*
 import scala.cli.commands.shared.SharedOptions
 import scala.cli.config.{ConfigDb, Keys}
 import scala.compose.builder.*
+import scala.compose.builder.targets.{Target, TargetKind}
 import scala.compose.builder.errors.*
 import scala.concurrent.Await
 import scala.concurrent.duration.Duration
@@ -101,7 +102,12 @@ object Bsp extends ScalaCommand[BspOptions] {
                 inputs.sourceHash(),
                 m.name,
                 m.dependsOn,
-                m.platforms.map(_.toString)
+                m.platforms.map(_.toString),
+                m.resourceGenerators.flatMap {
+                  case ResourceGenerator.Copy(Target(module, TargetKind.Package), dest) =>
+                    Some(module -> os.RelPath(dest))
+                  case _ => None
+                }
               )
             end for
           end ms

@@ -12,7 +12,11 @@ case class Module(
   inputsHash: String,
   projectName: String,
   dependsOn: List[String],
-  platforms: List[String]
+  platforms: List[String],
+  resourceGenerators: List[(
+    String,
+    os.RelPath
+  )] // TODO: so far just which modules to package as a resource
 )
 final case class CrossModule(
   module: Module,
