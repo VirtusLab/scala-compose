@@ -59,7 +59,7 @@ object TestInputs {
 
   private lazy val baseTmpDir = {
     val base = Option(System.getenv("SCALA_CLI_TMP")).map(os.Path(_)).getOrElse {
-      os.temp.dir(prefix = "scala-cli-it-tests")
+      os.temp.dir(prefix = "scala-cli-integration")
     }
     val rng = new SecureRandom
     val d   = base / s"run-${math.abs(rng.nextInt().toLong)}"
