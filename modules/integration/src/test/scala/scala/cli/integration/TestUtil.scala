@@ -13,10 +13,14 @@ import scala.util.Properties
 
 object TestUtil {
 
-  val cliKind: String              = sys.props("test.scala-cli.kind")
-  val isNativeCli: Boolean         = cliKind.startsWith("native")
-  val isCI: Boolean                = System.getenv("CI") != null
-  val cliPath: String              = sys.props("test.scala-cli.path")
+  val cliKind: String      = sys.props("test.scala-cli.kind")
+  val isNativeCli: Boolean = cliKind.startsWith("native")
+  val isCI: Boolean        = System.getenv("CI") != null
+  val cliPath: String = Option(sys.props("test.scala-cli.path")).getOrElse {
+    val path =
+      os.proc("./mill", "-i", "show", "cli.standaloneLauncher").call(cwd = os.pwd).out.trim()
+    path.dropWhile(_ != ':').drop(1).dropWhile(_ != ':').drop(1).dropRight(1)
+  }
   val debugPortOpt: Option[String] = sys.props.get("test.scala-cli.debug.port")
   val detectCliPath                = if (TestUtil.isNativeCli) TestUtil.cliPath else "scala-cli"
   val cli: Seq[String]             = cliCommand(cliPath)

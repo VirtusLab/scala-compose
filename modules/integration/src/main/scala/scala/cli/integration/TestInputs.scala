@@ -58,12 +58,11 @@ object TestInputs {
   }
 
   private lazy val baseTmpDir = {
-    Option(System.getenv("SCALA_CLI_TMP")).getOrElse {
-      sys.error("SCALA_CLI_TMP not set")
+    val base = Option(System.getenv("SCALA_CLI_TMP")).map(os.Path(_)).getOrElse {
+      os.temp.dir(prefix = "scala-cli-it-tests")
     }
-    val base = os.Path(System.getenv("SCALA_CLI_TMP"), os.pwd)
-    val rng  = new SecureRandom
-    val d    = base / s"run-${math.abs(rng.nextInt().toLong)}"
+    val rng = new SecureRandom
+    val d   = base / s"run-${math.abs(rng.nextInt().toLong)}"
     os.makeDir.all(d)
     Runtime.getRuntime.addShutdownHook(
       new Thread("scala-cli-its-clean-up-tmp-dir") {
