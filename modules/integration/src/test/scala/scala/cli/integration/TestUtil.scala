@@ -13,7 +13,7 @@ import scala.util.Properties
 
 object TestUtil {
 
-  val cliKind: String      = sys.props("test.scala-cli.kind")
+  val cliKind: String      = Option(sys.props("test.scala-cli.kind")).getOrElse("jvm")
   val isNativeCli: Boolean = cliKind.startsWith("native")
   val isCI: Boolean        = System.getenv("CI") != null
   val cliPath: String = Option(sys.props("test.scala-cli.path")).getOrElse {
