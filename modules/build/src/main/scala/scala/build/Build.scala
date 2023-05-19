@@ -477,6 +477,8 @@ object Build {
     }
   }
 
+  def packagedRootDir(root: os.Path, projectName: String): os.Path =
+    root / Constants.workspaceDirName / projectName / "bin"
   def resourcesRootDir(root: os.Path, projectName: String): os.Path =
     root / Constants.workspaceDirName / projectName / "managed-resources"
   def classesRootDir(root: os.Path, projectName: String): os.Path =

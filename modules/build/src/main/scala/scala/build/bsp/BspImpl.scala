@@ -8,7 +8,6 @@ import com.github.plokhotnyuk.jsoniter_scala.core.{
   writeToStringReentrant
 }
 import dependency.ScalaParameters
-import jdk.javadoc.internal.doclets.toolkit.BaseOptions
 import org.eclipse.lsp4j.jsonrpc
 import org.eclipse.lsp4j.jsonrpc.messages.ResponseError
 
@@ -358,11 +357,24 @@ final class BspImpl(
     either[(BuildException, Scope)] {
       val preBuilds: Seq[PreBuildProject] =
         value(prepareBuild(currentBloopSession, reloadableOptions))
-      preBuilds.map { preBuild =>
-        if (notifyChanges && (preBuild.mainScope.buildChanged || preBuild.testScope.buildChanged))
+
+      val sorted = BspImpl.Dag.topologicalSort(preBuilds).flatten // TODO: parallelize levels
+
+      sorted.foldLeft(Map.empty[String, (Build, Boolean)]) { (acc, preBuild) =>
+        val mainChanged = preBuild.mainScope.buildChanged
+        if (notifyChanges && (mainChanged || preBuild.testScope.buildChanged))
           notifyBuildChange(currentBloopSession)
-        value(doBuildOnce(preBuild.module, preBuild.mainScope, Scope.Main))
+        preBuild.module.resourceGenerators.foreach((module, doPackage) =>
+          acc(module) match
+            case (build: Build.Successful, true) => // module has changed and was successful
+              value(doPackage(reloadableOptions, build).left.map(_ -> Scope.Main))
+            case _ =>
+              ()
+        )
+
+        val mainBuild = value(doBuildOnce(preBuild.module, preBuild.mainScope, Scope.Main))
         value(doBuildOnce(preBuild.module, preBuild.testScope, Scope.Test))
+        acc + (preBuild.module.projectName -> (mainBuild, mainChanged))
       }
       ()
     }
@@ -414,6 +426,7 @@ final class BspImpl(
     *   a future of [[b.CompileResult]]
     */
   private def compile(
+    buildTargetIds: collection.Seq[b.BuildTargetIdentifier],
     currentBloopSession: BloopSession,
     executor: Executor,
     reloadableOptions: BspReloadableOptions,
@@ -488,6 +501,7 @@ final class BspImpl(
           actualLocalClient.reportDiagnosticsForFiles(targetId, param.diagnostics, reset = false)
         }
 
+        // TODO: inspect buildTargetIds and intercept build targets that need resource generators
         doCompile().thenCompose { res =>
 
           def doPostProcess(data: PreBuildData, scope: Scope): Unit =
@@ -583,8 +597,8 @@ final class BspImpl(
     )
     lazy val bspServer = new BspServer(
       remoteServer.bloopServer.server,
-      doCompile =>
-        compile(bloopSession0, threads.prepareBuildExecutor, reloadableOptions, doCompile),
+      (params, doCompile) =>
+        compile(params, bloopSession0, threads.prepareBuildExecutor, reloadableOptions, doCompile),
       logger,
       presetIntelliJ
     )
@@ -797,7 +811,6 @@ final class BspImpl(
     *   a future containing a valid workspace/reload response
     */
   private def onReload(): CompletableFuture[AnyRef] = {
-    ???
     val currentBloopSession = bloopSession.get()
     bspReloadableOptionsReference.reload()
     val reloadableOptions = bspReloadableOptionsReference.get
@@ -930,7 +943,7 @@ object BspImpl {
       def id(t: PreBuildProject): String = t.module.projectName
       def weight(t: PreBuildProject): Int = 1 // if some targets take longer to build, we could factor that in here
       def dependsOn(t: PreBuildProject): Seq[String] =
-        t.module.dependsOn ++ t.module.resourceGenerators.map((k, _) => k)
+        t.mainScope.dependsOn
     }
   }
 
@@ -966,10 +979,13 @@ object BspImpl {
             )
         buf
 
+      val sNext     = mutable.LinkedHashSet.empty[String]
+      val sLeftOver = mutable.LinkedHashMap.empty[String, mutable.LinkedHashSet[String]]
+
       @tailrec
       def iterate(s1: List[String], s0: List[String], acc: List[List[String]]): List[List[T]] =
-        val sNext     = mutable.LinkedHashSet.empty[String]
-        val sLeftOver = mutable.LinkedHashMap.empty[String, mutable.LinkedHashSet[String]]
+        sNext.clear()
+        sLeftOver.clear()
 
         // reset weights of targets that are in s0
         for target <- s0 do

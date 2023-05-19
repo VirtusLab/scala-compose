@@ -6,6 +6,7 @@ import com.github.plokhotnyuk.jsoniter_scala.core.*
 import scala.build.EitherCps.{either, value}
 import scala.build.*
 import scala.build.bsp.{BspReloadableOptions, BspThreads}
+import scala.build.options.{PackageOptions, PackageType}
 import scala.build.errors.BuildException
 import scala.build.input.Inputs
 import scala.build.internal.CustomCodeWrapper
@@ -20,6 +21,7 @@ import scala.compose.builder.targets.{Target, TargetKind}
 import scala.compose.builder.errors.*
 import scala.concurrent.Await
 import scala.concurrent.duration.Duration
+
 object Bsp extends ScalaCommand[BspOptions] {
   override def hidden                  = true
   override def scalaSpecificationLevel = SpecificationLevel.IMPLEMENTATION
@@ -97,6 +99,42 @@ object Bsp extends ScalaCommand[BspOptions] {
 
               val inputs = value(argsToInputs(inputsRaw))
 
+              val doPackage = (pkgType: PackageType, fromModule: String, nuDest: os.RelPath) => (reloadableOptions: BspReloadableOptions, build: Build.Successful) => either {
+                import scala.cli.commands.package0.Package
+                import scala.cli.commands.shared.MainClassOptions
+
+                val logger = reloadableOptions.logger
+
+                val packageDestDir = Build.packagedRootDir(configDir, fromModule)
+
+                os.makeDir.all(packageDestDir)
+
+                val packageDestPath = (pkgType: @unchecked) match
+                  case PackageType.Js  => packageDestDir / "main.js"
+
+                val _ = value(Package.doPackage0(
+                  logger = logger,
+                  outputOpt = Some(packageDestPath.toString),
+                  force = true,
+                  forcedPackageTypeOpt = Some(pkgType),
+                  build = build,
+                  extraArgs = Nil,
+                  expectedModifyEpochSecondOpt = None,
+                  allowTerminate = false,
+                  mainClassOptions = MainClassOptions()
+                ))
+
+                val finalDest = Build.resourcesRootDir(configDir, m.name) / nuDest
+
+                os.copy(
+                  packageDestPath,
+                  finalDest,
+                  createFolders = true
+                )
+
+                ()
+              }
+
               scala.build.bsp.Module(
                 inputs,
                 inputs.sourceHash(),
@@ -105,7 +143,12 @@ object Bsp extends ScalaCommand[BspOptions] {
                 m.platforms.map(_.toString),
                 m.resourceGenerators.flatMap {
                   case ResourceGenerator.Copy(Target(module, TargetKind.Package), dest) =>
-                    Some(module -> os.RelPath(dest))
+                    val dest0 = os.RelPath(dest)
+                    val fromModule = config.modules(module)
+
+                    fromModule.platforms match
+                      case Seq(PlatformKind.`scala-js`) => Some((module, doPackage(PackageType.Js, module, dest0)))
+                      case _ => None
                   case _ => None
                 }
               )
