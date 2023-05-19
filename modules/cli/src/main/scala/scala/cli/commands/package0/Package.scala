@@ -176,6 +176,27 @@ object Package extends ScalaCommand[PackageOptions] with BuildCommandHelpers {
     buildOptions
   }
 
+  private[scala] def doPackage0(
+    logger: Logger,
+    outputOpt: Option[String],
+    force: Boolean,
+    forcedPackageTypeOpt: Option[PackageType],
+    build: Build.Successful,
+    extraArgs: Seq[String],
+    expectedModifyEpochSecondOpt: Option[Long],
+    allowTerminate: Boolean,
+    mainClassOptions: MainClassOptions
+  ): Either[BuildException, Option[Long]] = doPackage(
+    logger,
+    outputOpt,
+    force,
+    forcedPackageTypeOpt,
+    build,
+    extraArgs,
+    expectedModifyEpochSecondOpt,
+    allowTerminate,
+    mainClassOptions)
+
   private def doPackage(
     logger: Logger,
     outputOpt: Option[String],

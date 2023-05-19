@@ -2,6 +2,8 @@ package scala.build.bsp
 
 import com.swoval.files.PathWatchers
 
+import scala.build.errors.BuildException
+
 import java.util.concurrent.atomic.AtomicReference
 import scala.build.{Build, ScopedSources, CrossSources}
 import scala.build.compiler.BloopCompiler
@@ -15,8 +17,8 @@ case class Module(
   platforms: List[String],
   resourceGenerators: List[(
     String,
-    os.RelPath
-  )] // TODO: so far just which modules to package as a resource
+    (BspReloadableOptions, Build.Successful) => Either[BuildException, Unit]
+  )], // TODO: so far just which modules to package as a resource
 )
 final case class CrossModule(
   module: Module,
