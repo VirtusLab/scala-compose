@@ -99,9 +99,7 @@ final class BspImpl(
     val persistentLogger = new PersistentDiagnosticLogger(logger)
     val bspServer        = currentBloopSession.bspServer
 
-    type MultiModule = CrossModule
-
-    val crossModules: Seq[MultiModule] = currentBloopSession.modules.flatMap { module =>
+    val crossModules: Seq[CrossModule] = currentBloopSession.modules.flatMap { module =>
       val inputs = module.inputs
 
       // allInputs contains elements from using directives
@@ -128,11 +126,18 @@ final class BspImpl(
       if (verbosity >= 3)
         pprint.err.log(scopedSources)
 
-      val mainModule = CrossModule(module, allInputs, crossSources, scopedSources)
-      mainModule :: Nil
+      def makeModule(platform: Option[Platform]) =
+        CrossModule(module, allInputs, crossSources, scopedSources, platform)
+
+      if module.platforms.isEmpty then
+        makeModule(None) :: Nil
+      else
+        module.platforms.map { platform =>
+          makeModule(Platform.parse(Platform.normalize(platform)))
+        }
     }
 
-    val crossModuleLookup = crossModules.map(cm => cm.module.projectName -> cm).toMap
+    val crossModuleLookup = crossModules.map(cm => (cm.module.projectName, cm.platform) -> cm).toMap
 
     extension (cm: CrossModule)
       def resourcesDir: os.Path =
@@ -145,10 +150,10 @@ final class BspImpl(
               cm.allInputs.projectName
             )
 
-      def scopedClassesDir(scope: Scope): os.Path =
+      def scopedClassesDir(scope: Scope, platform: Option[Platform]): os.Path =
         configDir match
           case Some(workspace) =>
-            Build.classesDir(workspace, cm.module.projectName, scope)
+            Build.classesDir(workspace, cm.module.projectName, scope, optPlatform = platform)
           case None =>
             Build.classesDir(
               cm.allInputs.workspace,
@@ -173,10 +178,10 @@ final class BspImpl(
           )
 
         def step(acc: BuildOptions, dep: String) =
-          val depM = crossModuleLookup(dep)
+          val depM = crossModuleLookup((dep, cm.platform))
           val classesDir0 =
             if scope == Scope.Test then None
-            else Some(depM.scopedClassesDir(scope))
+            else Some(depM.scopedClassesDir(scope, depM.platform))
           val sharedOpts = getDepOptions(depM.crossSources.sharedOptions(acc), classesDir0)
           val acc1 =
             depM
@@ -193,22 +198,17 @@ final class BspImpl(
 
       val sharedOptions = cm.crossSources.sharedOptions(buildOptions)
 
-      val platformArg =
-        if cm.module.platforms.sizeIs == 1 then
-          cm.module.platforms.head match
-            case "jvm"          => Some(scala.build.options.Platform.JVM)
-            case "scala-js"     => Some(scala.build.options.Platform.JS)
-            case "scala-native" => Some(scala.build.options.Platform.Native)
-        else
-          None
-
       val platformArg0 =
-        platformArg.map(p => Positioned(List(Position.Custom("DEFAULT-COMPOSE")), p))
+        cm.platform.map(p => Positioned(List(Position.Custom("DEFAULT-COMPOSE")), p))
 
       val modulePlatform = platformArg0.getOrElse(sharedOptions.platform)
 
       val mainDeps = cm.depOptions(buildOptions, Scope.Main, modulePlatform)
       val testDeps = cm.depOptions(buildOptions, Scope.Test, modulePlatform)
+
+      def mixInPlatform(baseOptions: BuildOptions) = baseOptions.copy(
+        scalaOptions = baseOptions.scalaOptions.copy(platform = Some(modulePlatform))
+      )
 
       val sourcesMain0 = cm.scopedSources.sources(Scope.Main, sharedOptions orElse mainDeps)
       val sourcesTest0 = cm.scopedSources.sources(Scope.Test, sharedOptions orElse testDeps)
@@ -226,22 +226,33 @@ final class BspImpl(
       if (verbosity >= 3)
         pprint.err.log(sourcesMain)
 
-      val options0Main = sourcesMain.buildOptions
-      val options0Test = sourcesTest.buildOptions.orElse(options0Main)
+      val options0Main = mixInPlatform(sourcesMain.buildOptions)
+      val options0Test = mixInPlatform(sourcesTest.buildOptions.orElse(options0Main))
 
       val generatedSourcesMain =
         sourcesMain.generateSources(cm.allInputs.generatedSrcRoot(Scope.Main))
       val generatedSourcesTest =
         sourcesTest.generateSources(cm.allInputs.generatedSrcRoot(Scope.Test))
 
-      val resourceDependencies = cm.module.resourceGenerators.map(_(0))
 
-      val mainDependsOn = cm.module.dependsOn ++ resourceDependencies
+      val mainDependsOn =
+        val resourceDependencies = cm.module.resourceGenerators.flatMap((dep, _, _) =>
+          // TODO: optimise
+          val candidates = crossModules.filter(_.module.projectName == dep)
+          assert(candidates.sizeIs == 1) // we should enforce that application modules can only have a single platform
+          candidates.head.bloopName
+        )
+        val libraryDeps = cm.module.dependsOn.flatMap(d =>
+          crossModuleLookup.get((d, cm.platform)).flatMap(_.bloopName)
+        )
+        libraryDeps ++ resourceDependencies
       val testDependsOn = Nil // will be patched to depend on main
 
       bspServer.setExtraDependencySources(options0Main.classPathOptions.extraSourceJars)
       bspServer.setGeneratedSources(Scope.Main, generatedSourcesMain)
       bspServer.setGeneratedSources(Scope.Test, generatedSourcesTest)
+
+      val moduleProjectName = cm.platform.map(_ => cm.module.projectName)
 
       val (classesDir0Main, scalaParamsMain, artifactsMain, projectMain, buildChangedMain) = value {
         val res = Build.prepareBuild(
@@ -255,7 +266,8 @@ final class BspImpl(
           persistentLogger,
           localClient,
           maybeRecoverOnError(Scope.Main),
-          moduleProjectName = configDir.map(_ => cm.module.projectName),
+          moduleProjectName = moduleProjectName,
+          optPlatform = cm.platform,
           dependsOn = mainDependsOn,
           // resourceGenerators = cm.module.resourceGenerators,
           workspace = configDir
@@ -275,7 +287,8 @@ final class BspImpl(
           persistentLogger,
           localClient,
           maybeRecoverOnError(Scope.Test),
-          moduleProjectName = configDir.map(_ => cm.module.projectName),
+          moduleProjectName = moduleProjectName,
+          optPlatform = cm.platform,
           dependsOn = testDependsOn,
           // resourceGenerators = Nil,
           workspace = configDir
@@ -315,7 +328,7 @@ final class BspImpl(
         projectOptions.logActionableDiagnostics(persistentLogger)
       }
 
-      PreBuildProject(mainScope, testScope, cm.module, persistentLogger.diagnostics)
+      PreBuildProject(mainScope, testScope, cm.module, moduleProjectName, cm.bloopName.getOrElse(cm.module.projectName), cm.platform, persistentLogger.diagnostics)
     }
   }
 
@@ -327,6 +340,8 @@ final class BspImpl(
 
     def doBuildOnce(
       module: Module,
+      moduleProjectName: Option[String],
+      optPlatform: Option[Platform],
       data: PreBuildData,
       scope: Scope
     ): Either[(BuildException, Scope), Build] =
@@ -340,7 +355,8 @@ final class BspImpl(
         actualLocalClient,
         currentBloopSession.remoteServer,
         partialOpt = None,
-        moduleProjectName = configDir.map(_ => module.projectName),
+        moduleProjectName = moduleProjectName,
+        optPlatform = optPlatform,
         dependsOn = data.dependsOn,
         workspace = configDir
       ).left.map(_ -> scope)
@@ -355,17 +371,23 @@ final class BspImpl(
         val mainChanged = preBuild.mainScope.buildChanged
         if (notifyChanges && (mainChanged || preBuild.testScope.buildChanged))
           notifyBuildChange(currentBloopSession)
-        preBuild.module.resourceGenerators.foreach((module, doPackage) =>
-          acc(module) match
-            case (build: Build.Successful, true) => // module has changed and was successful
-              value(doPackage(reloadableOptions, build).left.map(_ -> Scope.Main))
-            case _ =>
+        if preBuild.module.resourceGenerators.nonEmpty then
+          reloadableOptions.logger.error(s"!!! ${preBuild.moduleId} has resource generators")
+        preBuild.module.resourceGenerators.foreach((module, doUpdate, doPackage) =>
+          val preBuild0 = preBuilds.find(_.module.projectName == module).get
+          reloadableOptions.logger.error(s"!!! attempting to find prebuild ${preBuild0.moduleId}")
+          acc(preBuild0.moduleId) match
+            case (build: Build.Successful, didUpdate) =>
+              if didUpdate || value(doUpdate(reloadableOptions).left.map(_ -> Scope.Main)) then
+                value(doPackage(reloadableOptions, build).left.map(_ -> Scope.Main))
+            case was =>
+              reloadableOptions.logger.error(s"!!! module ${preBuild0.moduleId} was not successful: $was")
               ()
         )
 
-        val mainBuild = value(doBuildOnce(preBuild.module, preBuild.mainScope, Scope.Main))
-        value(doBuildOnce(preBuild.module, preBuild.testScope, Scope.Test))
-        acc + (preBuild.module.projectName -> (mainBuild, mainChanged))
+        val mainBuild = value(doBuildOnce(preBuild.module, preBuild.moduleName, preBuild.platform, preBuild.mainScope, Scope.Main))
+        value(doBuildOnce(preBuild.module,  preBuild.moduleName, preBuild.platform, preBuild.testScope, Scope.Test))
+        acc + (preBuild.moduleId -> (mainBuild, mainChanged))
       }
       ()
     }
@@ -485,6 +507,7 @@ final class BspImpl(
           actualLocalClient.resetBuildExceptionDiagnostics(targetId)
 
         val mainTargetIds =
+          // TODO: fix this to include the platform
           currentBloopSession.bspServer.projectScopeNames(Scope.Main).toMap
 
         params.foreach { param =>
@@ -495,16 +518,7 @@ final class BspImpl(
         // TODO: inspect buildTargetIds and intercept build targets that need resource generators
         doCompile().thenCompose { res =>
 
-          def doPostProcess(data: PreBuildData, scope: Scope): Unit =
-
-            val module = configDir match
-              case Some(_) => // TODO: if scala-compose
-                val moduleName =
-                  if scope == Scope.Test then data.project.projectName.stripSuffix("-test")
-                  else data.project.projectName
-                currentBloopSession.modules.find(_.projectName == moduleName).get
-              case None => currentBloopSession.modules.head
-
+          def doPostProcess(data: PreBuildData, module: Module, scope: Scope): Unit =
             for (sv <- data.project.scalaCompiler.map(_.scalaVersion))
               Build.postProcess(
                 data.generatedSources,
@@ -520,8 +534,8 @@ final class BspImpl(
             CompletableFuture.supplyAsync(
               () =>
                 params.foreach(param =>
-                  doPostProcess(param.mainScope, Scope.Main)
-                  doPostProcess(param.testScope, Scope.Test)
+                  doPostProcess(param.mainScope, param.module, Scope.Main)
+                  doPostProcess(param.testScope, param.module, Scope.Test)
                 )
                 res
               ,
@@ -893,12 +907,15 @@ object BspImpl {
     mainScope: PreBuildData,
     testScope: PreBuildData,
     module: Module,
+    moduleName: Option[String],
+    moduleId: String,
+    platform: Option[Platform],
     diagnostics: Seq[Diagnostic]
   )
 
   private object PreBuildProject {
     given asModule: ModuleLike[PreBuildProject] with {
-      def id(t: PreBuildProject): String = t.module.projectName
+      def id(t: PreBuildProject): String = t.moduleId
       def weight(t: PreBuildProject): Int = 1 // if some targets take longer to build, we could factor that in here
       def dependsOn(t: PreBuildProject): Seq[String] =
         t.mainScope.dependsOn

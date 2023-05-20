@@ -146,8 +146,12 @@ object Bsp extends ScalaCommand[BspOptions] {
                     val dest0 = os.RelPath(dest)
                     val fromModule = config.modules(module)
 
+                    val doUpdate = (reloadableOptions: BspReloadableOptions) => either {
+                      !os.exists(Build.resourcesRootDir(configDir, m.name) / dest0)
+                    }
+
                     fromModule.platforms match
-                      case Seq(PlatformKind.`scala-js`) => Some((module, doPackage(PackageType.Js, module, dest0)))
+                      case Seq(PlatformKind.`scala-js`) => Some((module, doUpdate, doPackage(PackageType.Js, module, dest0)))
                       case _ => None
                   case _ => None
                 }

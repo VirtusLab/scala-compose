@@ -7,6 +7,8 @@ import scala.build.input.Inputs
 import scala.build.internal.Constants
 import scala.build.options.Scope
 import scala.collection.mutable
+import scala.build.options.Platform
+import org.checkerframework.checker.units.qual.m
 
 trait HasGeneratedSourcesImpl extends HasGeneratedSources {
 
@@ -47,19 +49,25 @@ trait HasGeneratedSourcesImpl extends HasGeneratedSources {
 
   def newInputs(configDir: Option[os.Path], modules: Seq[Module]): Unit = {
     resetProjectNames()
+
+    def setProjectNames(workspace: os.Path, mainName: String, testName: String): Unit =
+      setProjectName(workspace, mainName, Scope.Main)
+      setProjectName(workspace, testName, Scope.Test)
+
     modules.foreach { module =>
-      val (workspace, mainProjectName, testProjectName) = configDir match {
+      configDir match
         case Some(workspace) =>
-          (workspace, module.projectName, s"${module.projectName}-test")
+          module.platforms.map { platform =>
+            val platform0 = Platform.parse(Platform.normalize(platform)).get
+
+            val mainProjectName =
+              if platform0 == Platform.JVM then module.projectName
+              else s"${module.projectName}-${Platform.normalize(platform0.repr)}"
+
+            setProjectNames(workspace, mainProjectName, s"${mainProjectName}-test")
+          }
         case None =>
-          (
-            module.inputs.workspace,
-            module.inputs.projectName,
-            module.inputs.scopeProjectName(Scope.Test)
-          )
-      }
-      setProjectName(workspace, mainProjectName, Scope.Main)
-      setProjectName(workspace, testProjectName, Scope.Test)
+          setProjectNames(module.inputs.workspace, module.inputs.projectName, module.inputs.scopeProjectName(Scope.Test))
     }
   }
 
