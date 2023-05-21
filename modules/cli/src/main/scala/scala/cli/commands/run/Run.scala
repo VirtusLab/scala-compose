@@ -326,6 +326,29 @@ object Run extends ScalaCommand[RunOptions] with BuildCommandHelpers {
     }
   }
 
+  private[scala] def maybeRunOnce0(
+    build: Build.Successful,
+    args: Seq[String],
+    logger: Logger,
+    allowExecve: Boolean,
+    jvmRunner: Boolean,
+    potentialMainClasses: Seq[String],
+    runMode: RunMode,
+    showCommand: Boolean,
+    scratchDirOpt: Option[os.Path]
+  ): Either[BuildException, Either[Seq[String], (Process, Option[() => Unit])]] =
+    maybeRunOnce(
+      build,
+      args,
+      logger,
+      allowExecve,
+      jvmRunner,
+      potentialMainClasses,
+      runMode,
+      showCommand,
+      scratchDirOpt
+    )
+
   private def maybeRunOnce(
     build: Build.Successful,
     args: Seq[String],

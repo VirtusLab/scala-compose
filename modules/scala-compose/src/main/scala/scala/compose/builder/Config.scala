@@ -2,6 +2,8 @@ package scala.compose.builder
 
 import toml.Value.*
 import upickle.default.*
+
+import scala.compose.builder.ModuleKind.{Application, Library}
 import scala.compose.builder.errors.*
 
 object Config:
@@ -128,6 +130,10 @@ object PlatformKind:
 enum ModuleKind derives ReadWriter:
   case Library
   case Application(mainClass: Option[String])
+
+  def isApplication = this match
+    case Application(_) => true
+    case Library        => false
 
   // inline def asApplication(using inline ce: CanError[String]): Application = this match
   inline def asApplication(using inline ce: CanError[String]): Application = this match

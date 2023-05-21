@@ -358,7 +358,8 @@ object Repl extends ScalaCommand[ReplOptions] {
           output = classDir.getOrElse(ws),
           diagnostics = None,
           generatedSources = Nil,
-          isPartial = false
+          isPartial = false,
+          refreshed = false
         )
       }
 

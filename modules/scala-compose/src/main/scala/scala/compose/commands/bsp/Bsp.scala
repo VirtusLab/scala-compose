@@ -95,7 +95,7 @@ object Bsp extends ScalaCommand[BspOptions] {
             for
               (_, m) <- config.modules.iterator
             yield
-              val inputsRaw = Seq((configDir / m.root).toString())
+              val inputsRaw = Seq((configDir / os.RelPath(m.root)).toString())
 
               val inputs = value(argsToInputs(inputsRaw))
 
