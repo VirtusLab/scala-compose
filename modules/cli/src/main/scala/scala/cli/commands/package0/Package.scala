@@ -195,7 +195,8 @@ object Package extends ScalaCommand[PackageOptions] with BuildCommandHelpers {
     extraArgs,
     expectedModifyEpochSecondOpt,
     allowTerminate,
-    mainClassOptions)
+    mainClassOptions
+  )
 
   private def doPackage(
     logger: Logger,

@@ -17,7 +17,10 @@ import scala.util.Random
 
 class BspServer(
   bloopServer: b.BuildServer & b.ScalaBuildServer & b.JavaBuildServer & b.JvmBuildServer,
-  compile: (collection.Seq[b.BuildTargetIdentifier], () => CompletableFuture[b.CompileResult]) => CompletableFuture[b.CompileResult],
+  compile: (
+    collection.Seq[b.BuildTargetIdentifier],
+    () => CompletableFuture[b.CompileResult]
+  ) => CompletableFuture[b.CompileResult],
   logger: Logger,
   presetIntelliJ: Boolean = false
 ) extends b.BuildServer with b.ScalaBuildServer with b.JavaBuildServer with BuildServerForwardStubs

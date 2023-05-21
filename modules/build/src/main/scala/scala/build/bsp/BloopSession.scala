@@ -19,7 +19,7 @@ case class Module(
     String,
     (BspReloadableOptions) => Either[BuildException, Boolean],
     (BspReloadableOptions, Build.Successful) => Either[BuildException, Unit]
-  )], // TODO: so far just which modules to package as a resource
+  )] // TODO: so far just which modules to package as a resource
 )
 final case class CrossModule(
   module: Module,
@@ -103,6 +103,19 @@ object BloopSession {
       Option(ref.getAndSet(null))
     def update(former: BloopSession, newer: BloopSession, ifError: String): Unit =
       if (!ref.compareAndSet(former, newer))
+        sys.error(ifError)
+  }
+
+  final class BuildsReference {
+    private val ref = new AtomicReference[Map[String, Build]](null)
+    def get(): Option[Map[String, Build]] =
+      Some(ref.get())
+    def update(
+      former: Option[Map[String, Build]],
+      newer: Map[String, Build],
+      ifError: String
+    ): Unit =
+      if (!ref.compareAndSet(former.orNull, newer))
         sys.error(ifError)
   }
 }

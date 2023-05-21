@@ -64,10 +64,14 @@ trait HasGeneratedSourcesImpl extends HasGeneratedSources {
               if platform0 == Platform.JVM then module.projectName
               else s"${module.projectName}-${Platform.normalize(platform0.repr)}"
 
-            setProjectNames(workspace, mainProjectName, s"${mainProjectName}-test")
+            setProjectNames(workspace, mainProjectName, s"$mainProjectName-test")
           }
         case None =>
-          setProjectNames(module.inputs.workspace, module.inputs.projectName, module.inputs.scopeProjectName(Scope.Test))
+          setProjectNames(
+            module.inputs.workspace,
+            module.inputs.projectName,
+            module.inputs.scopeProjectName(Scope.Test)
+          )
     }
   }
 

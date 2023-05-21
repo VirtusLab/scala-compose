@@ -99,41 +99,44 @@ object Bsp extends ScalaCommand[BspOptions] {
 
               val inputs = value(argsToInputs(inputsRaw))
 
-              val doPackage = (pkgType: PackageType, fromModule: String, nuDest: os.RelPath) => (reloadableOptions: BspReloadableOptions, build: Build.Successful) => either {
-                import scala.cli.commands.package0.Package
-                import scala.cli.commands.shared.MainClassOptions
+              val doPackage = (pkgType: PackageType, fromModule: String, nuDest: os.RelPath) =>
+                (reloadableOptions: BspReloadableOptions, build: Build.Successful) =>
+                  either {
+                    import scala.cli.commands.package0.Package
+                    import scala.cli.commands.shared.MainClassOptions
 
-                val logger = reloadableOptions.logger
+                    val logger = reloadableOptions.logger
 
-                val packageDestDir = Build.packagedRootDir(configDir, fromModule)
+                    val packageDestDir = Build.packagedRootDir(configDir, fromModule)
 
-                os.makeDir.all(packageDestDir)
+                    os.makeDir.all(packageDestDir)
 
-                val packageDestPath = (pkgType: @unchecked) match
-                  case PackageType.Js  => packageDestDir / "main.js"
+                    val packageDestPath = (pkgType: @unchecked) match
+                      case PackageType.Js => packageDestDir / "main.js"
 
-                val _ = value(Package.doPackage0(
-                  logger = logger,
-                  outputOpt = Some(packageDestPath.toString),
-                  force = true,
-                  forcedPackageTypeOpt = Some(pkgType),
-                  build = build,
-                  extraArgs = Nil,
-                  expectedModifyEpochSecondOpt = None,
-                  allowTerminate = false,
-                  mainClassOptions = MainClassOptions()
-                ))
+                    val _ = value(Package.doPackage0(
+                      logger = logger,
+                      outputOpt = Some(packageDestPath.toString),
+                      force = true,
+                      forcedPackageTypeOpt = Some(pkgType),
+                      build = build,
+                      extraArgs = Nil,
+                      expectedModifyEpochSecondOpt = None,
+                      allowTerminate = false,
+                      mainClassOptions = MainClassOptions()
+                    ))
 
-                val finalDest = Build.resourcesRootDir(configDir, m.name) / nuDest
+                    val finalDest = Build.resourcesRootDir(configDir, m.name) / nuDest
 
-                os.copy(
-                  packageDestPath,
-                  finalDest,
-                  createFolders = true
-                )
+                    os.copy(
+                      packageDestPath,
+                      finalDest,
+                      createFolders = true,
+                      replaceExisting = true
+                    )
 
-                ()
-              }
+                    ()
+                  }
 
               scala.build.bsp.Module(
                 inputs,
@@ -143,15 +146,17 @@ object Bsp extends ScalaCommand[BspOptions] {
                 m.platforms.map(_.toString),
                 m.resourceGenerators.flatMap {
                   case ResourceGenerator.Copy(Target(module, TargetKind.Package), dest) =>
-                    val dest0 = os.RelPath(dest)
+                    val dest0      = os.RelPath(dest)
                     val fromModule = config.modules(module)
 
-                    val doUpdate = (reloadableOptions: BspReloadableOptions) => either {
-                      !os.exists(Build.resourcesRootDir(configDir, m.name) / dest0)
-                    }
+                    val doUpdate = (reloadableOptions: BspReloadableOptions) =>
+                      either {
+                        !os.exists(Build.resourcesRootDir(configDir, m.name) / dest0)
+                      }
 
                     fromModule.platforms match
-                      case Seq(PlatformKind.`scala-js`) => Some((module, doUpdate, doPackage(PackageType.Js, module, dest0)))
+                      case Seq(PlatformKind.`scala-js`) =>
+                        Some((module, doUpdate, doPackage(PackageType.Js, module, dest0)))
                       case _ => None
                   case _ => None
                 }
