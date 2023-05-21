@@ -241,12 +241,13 @@ final class BspImpl(
       val generatedSourcesTest =
         sourcesTest.generateSources(cm.allInputs.generatedSrcRoot(Scope.Test))
 
-
       val mainDependsOn =
         val resourceDependencies = cm.module.resourceGenerators.flatMap((dep, _, _) =>
           // TODO: optimise
           val candidates = crossModules.filter(_.module.projectName == dep)
-          assert(candidates.sizeIs == 1) // we should enforce that application modules can only have a single platform
+          assert(
+            candidates.sizeIs == 1
+          ) // we should enforce that application modules can only have a single platform
           candidates.head.bloopName
         )
         val libraryDeps = cm.module.dependsOn.flatMap(d =>
@@ -336,7 +337,13 @@ final class BspImpl(
         projectOptions.logActionableDiagnostics(persistentLogger)
       }
 
-      PreBuildProject(mainScope, testScope, cm.module, moduleProjectName, cm.bloopName.getOrElse(cm.module.projectName), cm.platform, persistentLogger.diagnostics)
+      PreBuildProject(
+        mainScope,
+        testScope,
+        cm.module,
+        cm.platform,
+        persistentLogger.diagnostics
+      )
     }
   }
 
@@ -348,7 +355,6 @@ final class BspImpl(
 
     def doBuildOnce(
       module: Module,
-      moduleProjectName: Option[String],
       optPlatform: Option[Platform],
       data: PreBuildData,
       scope: Scope
@@ -363,41 +369,43 @@ final class BspImpl(
         actualLocalClient,
         currentBloopSession.remoteServer,
         partialOpt = None,
-        moduleProjectName = moduleProjectName,
+        moduleProjectName = optPlatform.map(_ => module.projectName),
         optPlatform = optPlatform,
         dependsOn = data.dependsOn,
         workspace = configDir
       ).left.map(_ -> scope)
 
     either[(BuildException, Scope)] {
+      val currentBuilds = bloopBuilds.get()
+
       val preBuilds: Seq[PreBuildProject] =
         value(prepareBuild(currentBloopSession, reloadableOptions))
 
       val sorted = BspImpl.Dag.topologicalSort(preBuilds).flatten // TODO: parallelize levels
 
-      sorted.foldLeft(Map.empty[String, (Build, Boolean)]) { (acc, preBuild) =>
+      val builds = sorted.foldLeft(Map.empty[String, Build]) { (acc, preBuild) =>
         val mainChanged = preBuild.mainScope.buildChanged
         if (notifyChanges && (mainChanged || preBuild.testScope.buildChanged))
           notifyBuildChange(currentBloopSession)
-        if preBuild.module.resourceGenerators.nonEmpty then
-          reloadableOptions.logger.error(s"!!! ${preBuild.moduleId} has resource generators")
         preBuild.module.resourceGenerators.foreach((module, doUpdate, doPackage) =>
           val preBuild0 = preBuilds.find(_.module.projectName == module).get
-          reloadableOptions.logger.error(s"!!! attempting to find prebuild ${preBuild0.moduleId}")
-          acc(preBuild0.moduleId) match
-            case (build: Build.Successful, didUpdate) =>
-              if didUpdate || value(doUpdate(reloadableOptions).left.map(_ -> Scope.Main)) then
-                value(doPackage(reloadableOptions, build).left.map(_ -> Scope.Main))
+          acc(preBuild0.mainScope.project.projectName) match
+            case build: Build.Successful =>
+              // if didUpdate || value(doUpdate(reloadableOptions).left.map(_ -> Scope.Main)) then
+              // TODO cache based on inputs
+              value(doPackage(reloadableOptions, build).left.map(_ -> Scope.Main))
             case was =>
-              reloadableOptions.logger.error(s"!!! module ${preBuild0.moduleId} was not successful: $was")
               ()
         )
 
-        val mainBuild = value(doBuildOnce(preBuild.module, preBuild.moduleName, preBuild.platform, preBuild.mainScope, Scope.Main))
-        value(doBuildOnce(preBuild.module,  preBuild.moduleName, preBuild.platform, preBuild.testScope, Scope.Test))
-        acc + (preBuild.moduleId -> (mainBuild, mainChanged))
+        val mainBuild =
+          value(doBuildOnce(preBuild.module, preBuild.platform, preBuild.mainScope, Scope.Main))
+        val testBuild =
+          value(doBuildOnce(preBuild.module, preBuild.platform, preBuild.testScope, Scope.Test))
+        acc + (preBuild.mainScope.project.projectName -> mainBuild) + (preBuild.testScope.project.projectName -> testBuild)
       }
-      ()
+
+      bloopBuilds.update(currentBuilds, builds, "concurrent loading of BSP build")
     }
   }
 
@@ -510,7 +518,7 @@ final class BspImpl(
         CompletableFuture.completedFuture(
           new b.CompileResult(b.StatusCode.ERROR)
         )
-      case Right(params) =>
+      case Right(preBuilds) =>
         for (targetId <- currentBloopSession.bspServer.targetIds)
           actualLocalClient.resetBuildExceptionDiagnostics(targetId)
 
@@ -518,10 +526,29 @@ final class BspImpl(
           // TODO: fix this to include the platform
           currentBloopSession.bspServer.projectScopeNames(Scope.Main).toMap
 
-        params.foreach { param =>
-          val targetId = mainTargetIds(param.mainScope.project.projectName)
-          actualLocalClient.reportDiagnosticsForFiles(targetId, param.diagnostics, reset = false)
+        val willCompile = buildTargetIds.toSet
+
+        def doPreProcess(preBuild: PreBuildProject): Unit = {
+          val targetId = mainTargetIds(preBuild.mainScope.project.projectName)
+          actualLocalClient.reportDiagnosticsForFiles(targetId, preBuild.diagnostics, reset = false)
+          if willCompile(targetId) then
+            val realBuilds = bloopBuilds.get() match
+              case Some(builds) =>
+                preBuild.module.resourceGenerators.foreach((module, willPackage, doPackage) =>
+                  val targetPreBuild = preBuilds.find(_.module.projectName == module).get
+                  val targetBuild    = builds(targetPreBuild.mainScope.project.projectName)
+                  // TODO: cache based on input changes
+                  targetBuild match
+                    case build: Build.Successful =>
+                      doPackage(reloadableOptions, build).left.foreach(
+                        reloadableOptions.logger.debug
+                      )
+                )
+              case None =>
+                ()
         }
+
+        preBuilds.foreach(doPreProcess)
 
         // TODO: inspect buildTargetIds and intercept build targets that need resource generators
         doCompile().thenCompose { res =>
@@ -541,9 +568,9 @@ final class BspImpl(
           if (res.getStatusCode == b.StatusCode.OK)
             CompletableFuture.supplyAsync(
               () =>
-                params.foreach(param =>
-                  doPostProcess(param.mainScope, param.module, Scope.Main)
-                  doPostProcess(param.testScope, param.module, Scope.Test)
+                preBuilds.foreach(preBuild =>
+                  doPostProcess(preBuild.mainScope, preBuild.module, Scope.Main)
+                  doPostProcess(preBuild.testScope, preBuild.module, Scope.Test)
                 )
                 res
               ,
@@ -631,6 +658,7 @@ final class BspImpl(
   }
 
   private val bloopSession = new BloopSession.Reference
+  private val bloopBuilds  = new BloopSession.BuildsReference
 
   /** The logic for the actual running of the `bsp` command, initializing the BSP connection.
     * @param initialInputs
@@ -948,16 +976,15 @@ object BspImpl {
     mainScope: PreBuildData,
     testScope: PreBuildData,
     module: Module,
-    moduleName: Option[String],
-    moduleId: String,
     platform: Option[Platform],
     diagnostics: Seq[Diagnostic]
   )
 
   private object PreBuildProject {
     given asModule: ModuleLike[PreBuildProject] with {
-      def id(t: PreBuildProject): String = t.moduleId
-      def weight(t: PreBuildProject): Int = 1 // if some targets take longer to build, we could factor that in here
+      def id(t: PreBuildProject): String = t.mainScope.project.projectName
+      def weight(t: PreBuildProject): Int =
+        1 // if some targets take longer to build, we could factor that in here
       def dependsOn(t: PreBuildProject): Seq[String] =
         t.mainScope.dependsOn
     }
@@ -978,11 +1005,13 @@ object BspImpl {
       import scala.collection.mutable
       import scala.annotation.tailrec
 
-      val byId = modules.map(m => ModuleLike[T].id(m) -> m).toMap
+      val byId   = modules.map(m => ModuleLike[T].id(m) -> m).toMap
       val lookup = byId.map((id, m) => id -> ModuleLike[T].dependsOn(m))
 
       val outgoingEdges =
-        lookup.map((k, v) => k -> v.map(dep => dep -> ModuleLike[T].weight(byId(dep))).to(mutable.LinkedHashMap))
+        lookup.map((k, v) =>
+          k -> v.map(dep => dep -> ModuleLike[T].weight(byId(dep))).to(mutable.LinkedHashMap)
+        )
 
       val incomingEdges: mutable.SeqMap[String, mutable.LinkedHashMap[String, Int]] =
         val buf = mutable.LinkedHashMap.empty[String, mutable.LinkedHashMap[String, Int]]
@@ -1007,15 +1036,15 @@ object BspImpl {
         for target <- s0 do
           val outgoing = outgoingEdges(target)
           for dep <- outgoing.keySet do
-            val depM = byId(dep)
+            val depM     = byId(dep)
             val incoming = incomingEdges(dep)
             incoming(target) = ModuleLike[T].weight(depM)
             outgoing(dep) = ModuleLike[T].weight(depM)
 
         val sAll = s1 ::: s0
 
-        val maxWeight   = sAll.flatMap(t => outgoingEdges(t).values.maxOption).maxOption.getOrElse(1)
-        val minWeight   = sAll.flatMap(t => outgoingEdges(t).values.minOption).minOption.getOrElse(1)
+        val maxWeight = sAll.flatMap(t => outgoingEdges(t).values.maxOption).maxOption.getOrElse(1)
+        val minWeight = sAll.flatMap(t => outgoingEdges(t).values.minOption).minOption.getOrElse(1)
         val decrementBy = minWeight
 
         extension [K](assoc: mutable.LinkedHashMap[K, Int])
@@ -1052,7 +1081,8 @@ object BspImpl {
           iterate(s2, sRest, s2 :: acc)
       end iterate
 
-      val s0 = incomingEdges.collect { case (target, incoming) if incoming.isEmpty => target }.toList
+      val s0 =
+        incomingEdges.collect { case (target, incoming) if incoming.isEmpty => target }.toList
       iterate(s0, Nil, s0 :: Nil)
     }
   }

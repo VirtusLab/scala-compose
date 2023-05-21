@@ -483,11 +483,17 @@ object Build {
     root / Constants.workspaceDirName / projectName / "managed-resources"
   def classesRootDir(root: os.Path, projectName: String): os.Path =
     root / Constants.workspaceDirName / projectName / "classes"
-  def classesDir(root: os.Path, projectName: String, scope: Scope, suffix: String = "", optPlatform: Option[Platform] = None): os.Path =
+  def classesDir(
+    root: os.Path,
+    projectName: String,
+    scope: Scope,
+    suffix: String = "",
+    optPlatform: Option[Platform] = None
+  ): os.Path =
     val pre = classesRootDir(root, projectName) / s"${scope.name}$suffix"
     optPlatform match
       case Some(platform) => pre / Platform.normalize(platform.repr)
-      case None => pre
+      case None           => pre
 
   def resourcesRegistry(
     root: os.Path,
@@ -851,7 +857,8 @@ object Build {
         case _ => inputs.scopeProjectName(scope)
 
     val classesDir0 = classesDir(workspace, mainProjectName, scope, optPlatform = optPlatform)
-    val scaladocDir = classesDir(workspace, mainProjectName, scope, suffix = "-doc", optPlatform = optPlatform)
+    val scaladocDir =
+      classesDir(workspace, mainProjectName, scope, suffix = "-doc", optPlatform = optPlatform)
 
     val generateSemanticDbs = options.scalaOptions.generateSemanticDbs.getOrElse(false)
 
