@@ -1,14 +1,16 @@
 package scala.build
 
 import ch.epfl.scala.bsp4j
+import ch.epfl.scala.bsp4j.TaskFinishParams
 import com.swoval.files.FileTreeViews.Observer
 import com.swoval.files.{PathWatcher, PathWatchers}
 import dependency.ScalaParameters
+import jdk.javadoc.internal.doclets.toolkit.BaseOptions
 
 import java.io.File
 import java.nio.file.FileSystemException
+import java.util.UUID
 import java.util.concurrent.{ScheduledExecutorService, ScheduledFuture}
-
 import scala.annotation.tailrec
 import scala.build.EitherCps.{either, value}
 import scala.build.Ops.*
@@ -52,7 +54,8 @@ object Build {
     output: os.Path,
     diagnostics: Option[Seq[(Either[String, os.Path], bsp4j.Diagnostic)]],
     generatedSources: Seq[GeneratedSource],
-    isPartial: Boolean
+    isPartial: Boolean,
+    refreshed: Boolean
   ) extends Build {
     def success: Boolean                  = true
     def successfulOpt: Some[this.type]    = Some(this)
@@ -220,8 +223,53 @@ object Build {
     )
   }
 
-  private def build(
+  final case class ResourceGenerator(
+    module: String,
+    shouldPackage: Logger => Either[BuildException, Boolean],
+    doPackage: (Logger, Build.Successful) => Either[BuildException, Unit]
+  )
+
+  final case class BuildModule(
     inputs: Inputs,
+    projectName: String,
+    platforms: List[Platform],
+    dependsOn: List[String],
+    resourceGenerators: List[ResourceGenerator]
+  )
+  private final case class CrossBuildModule(
+    module: BuildModule,
+    crossSources: CrossSources,
+    allInputs: Inputs,
+    sharedOptions: BuildOptions,
+    crossOptions: Seq[BuildOptions],
+    platform: Option[Platform]
+  ) {
+    lazy val bloopName: String = platform match
+      case Some(platform) =>
+        if platform == Platform.JVM then module.projectName
+        else s"${module.projectName}-${Platform.normalize(platform.repr)}"
+      case None => module.inputs.projectName
+
+    def scopedSources(baseOptions: BuildOptions): Either[BuildException, ScopedSources] =
+      crossSources.scopedSources(baseOptions)
+  }
+
+  private final case class PreBuild(cm: CrossBuildModule, buildDependencies: List[String])
+
+  private object PreBuild {
+    given asModule: ModuleLike[PreBuild] with {
+      def id(t: PreBuild): String = t.cm.bloopName
+
+      // def weight(t: PreBuild): Int =
+      //   1 // if some targets take longer to build, we could factor that in here
+
+      def dependsOn(t: PreBuild): Seq[String] =
+        t.buildDependencies
+    }
+  }
+
+  private def build(
+    modules: Seq[BuildModule],
     options: BuildOptions,
     logger: Logger,
     buildClient: BloopBuildClient,
@@ -230,24 +278,56 @@ object Build {
     crossBuilds: Boolean,
     buildTests: Boolean,
     partial: Option[Boolean],
-    actionableDiagnostics: Option[Boolean]
-  )(using ScalaCliInvokeData): Either[BuildException, Builds] = either {
-    // allInputs contains elements from using directives
-    val (crossSources, allInputs) = value {
-      CrossSources.forInputs(
-        inputs,
-        Sources.defaultPreprocessors(
-          options.archiveCache,
-          options.internal.javaClassNameVersionOpt,
-          () => options.javaHome().value.javaCommand
-        ),
-        logger,
-        options.suppressWarningOptions,
-        options.internal.exclude
-      )
+    actionableDiagnostics: Option[Boolean],
+    configDir: Option[os.Path]
+  )(using ScalaCliInvokeData): Either[BuildException, Map[String, Seq[Builds]]] = either {
+
+    val crossModules = modules.flatMap { module =>
+      // allInputs contains elements from using directives
+      val (crossSources, allInputs) = value {
+        CrossSources.forInputs(
+          module.inputs,
+          Sources.defaultPreprocessors(
+            options.scriptOptions.codeWrapper.getOrElse(CustomCodeWrapper),
+            options.archiveCache,
+            options.internal.javaClassNameVersionOpt,
+            () => options.javaHome().value.javaCommand
+          ),
+          logger,
+          options.suppressWarningOptions,
+          options.internal.exclude
+        )
+      }
+      val sharedOptions: BuildOptions     = crossSources.sharedOptions(options)
+      val crossOptions: Seq[BuildOptions] = sharedOptions.crossOptions
+
+      def makeModule(platform: Option[Platform]) =
+        CrossBuildModule(module, crossSources, allInputs, sharedOptions, crossOptions, platform)
+
+      if module.platforms.isEmpty then
+        makeModule(None) :: Nil
+      else
+        module.platforms.map(p => makeModule(Some(p)))
     }
-    val sharedOptions = crossSources.sharedOptions(options)
-    val crossOptions  = sharedOptions.crossOptions
+
+    val crossModuleLookup = crossModules.map(cm => (cm.module.projectName, cm.platform) -> cm).toMap
+
+    val preBuilds = crossModules.map { cm =>
+      val mainDependsOn =
+        val resourceDependencies = cm.module.resourceGenerators.map(rg =>
+          // TODO: optimise
+          val candidates = crossModules.filter(_.module.projectName == rg.module)
+          assert(
+            candidates.sizeIs == 1
+          ) // we should enforce that application modules can only have a single platform
+          candidates.head.bloopName
+        )
+        val libraryDeps = cm.module.dependsOn.flatMap(d =>
+          crossModuleLookup.get((d, cm.platform)).map(_.bloopName)
+        )
+        libraryDeps ++ resourceDependencies
+      PreBuild(cm, mainDependsOn)
+    }
 
     def doPostProcess(build: Build, inputs: Inputs, scope: Scope): Unit = build match {
       case build: Build.Successful =>
@@ -271,19 +351,101 @@ object Build {
       testDocOpt: Option[Build]
     )
 
+    extension (cm: CrossBuildModule)
+      def resourcesDir: os.Path =
+        configDir match
+          case Some(workspace) =>
+            Build.resourcesRootDir(workspace, cm.module.projectName)
+          case None =>
+            Build.resourcesRootDir(
+              cm.allInputs.workspace,
+              cm.allInputs.projectName
+            )
+
+      def scopedClassesDir(scope: Scope, platform: Option[Platform]): os.Path =
+        configDir match
+          case Some(workspace) =>
+            Build.classesDir(workspace, cm.module.projectName, scope, optPlatform = platform)
+          case None =>
+            Build.classesDir(
+              cm.allInputs.workspace,
+              cm.allInputs.projectName,
+              scope
+            )
+
+      def depOptions(
+        baseOptions: BuildOptions,
+        scope: Scope,
+        platform: Positioned[Platform]
+      ): Either[BuildException, BuildOptions] =
+        def getDepOptions(options: BuildOptions, optClassDir: Option[os.Path]) =
+          BuildOptions(
+            scalaOptions = ScalaOptions(platform = Some(platform)),
+            classPathOptions =
+              optClassDir.fold(options.classPathOptions) { dir =>
+                options.classPathOptions.copy(extraClassPath =
+                  dir +: options.classPathOptions.extraClassPath
+                )
+              }
+          )
+
+        def step(acc: BuildOptions, dep: String): Either[BuildException, BuildOptions] = either {
+          val depM = crossModuleLookup((dep, cm.platform))
+          val classesDir0 =
+            if scope == Scope.Test then None
+            else Some(depM.scopedClassesDir(scope, depM.platform))
+          val sharedOpts     = getDepOptions(depM.crossSources.sharedOptions(acc), classesDir0)
+          val scopedSources0 = value(depM.scopedSources(acc))
+          val acc1 =
+            scopedSources0
+              .buildOptions
+              .flatMap(_.valueFor(scope))
+              .foldRight(sharedOpts)((d, acc) => getDepOptions(d, None).orElse(acc))
+          value(depM.depOptions(acc1, scope, platform))
+        }
+
+        either {
+          cm.module.dependsOn.foldLeft(baseOptions)((acc, d) => value(step(acc, d)))
+        }
+      end depOptions
+
     def doBuild(
+      b: PreBuild,
       overrideOptions: BuildOptions
     ): Either[BuildException, NonCrossBuilds] = either {
+      import b.cm.{sharedOptions, crossSources, allInputs}
 
       val baseOptions = overrideOptions.orElse(sharedOptions)
 
       val scopedSources = value(crossSources.scopedSources(baseOptions))
 
-      val mainSources = value(scopedSources.sources(Scope.Main, baseOptions, allInputs.workspace))
-      val mainOptions = mainSources.buildOptions
+      val mainSources0 = value(scopedSources.sources(Scope.Main, baseOptions orElse mainDeps, allInputs.workspace))
+      val testSources0 = value(scopedSources.sources(Scope.Test, baseOptions orElse testDeps, allInputs.workspace))
 
-      val testSources = value(scopedSources.sources(Scope.Test, baseOptions, allInputs.workspace))
-      val testOptions = testSources.buildOptions
+      val platformArg0 =
+        b.cm.platform.map(p => Positioned(List(Position.Custom("DEFAULT-COMPOSE")), p))
+
+      val modulePlatform = platformArg0.getOrElse(baseOptions.platform)
+
+      val mainDeps = value(b.cm.depOptions(baseOptions, Scope.Main, modulePlatform))
+      val testDeps = value(b.cm.depOptions(baseOptions, Scope.Test, modulePlatform))
+
+      def mixInPlatform(baseOptions: BuildOptions) = baseOptions.copy(
+        scalaOptions = baseOptions.scalaOptions.copy(platform = Some(modulePlatform))
+      )
+
+      def addResource(sources: Sources, resourceDir: os.Path): Sources =
+        sources.copy(resourceDirs = resourceDir +: sources.resourceDirs)
+
+      val (mainSources, testSources) =
+        if b.cm.module.resourceGenerators.isEmpty then
+          (mainSources0, testSources0)
+        else
+          val resourceDir = b.cm.resourcesDir
+          (addResource(mainSources0, resourceDir), addResource(testSources0, resourceDir))
+
+      val mainOptions = mixInPlatform(mainSources.buildOptions)
+      val testOptions = mixInPlatform(testSources.buildOptions)
 
       val inputs0 = updateInputs(
         allInputs,
@@ -295,6 +457,7 @@ object Build {
         options: BuildOptions,
         sources: Sources,
         scope: Scope,
+        dependsOn: List[String],
         actualCompiler: ScalaCompiler = compiler
       ): Either[BuildException, Build] =
         either {
@@ -313,13 +476,22 @@ object Build {
             actualCompiler,
             buildTests,
             partial,
-            actionableDiagnostics
+            actionableDiagnostics,
+            moduleProjectName = b.cm.platform.map(_ => b.cm.module.projectName),
+            optPlatform = b.cm.platform,
+            dependsOn = dependsOn,
+            workspace = configDir
           )
 
           value(res)
         }
 
-      val mainBuild = value(doBuildScope(mainOptions, mainSources, Scope.Main))
+      val mainBuild = value(doBuildScope(
+        mainOptions,
+        mainSources,
+        Scope.Main,
+        dependsOn = b.buildDependencies
+      ))
       val mainDocBuildOpt = docCompilerOpt match {
         case None => None
         case Some(docCompiler) =>
@@ -327,6 +499,7 @@ object Build {
             mainOptions,
             mainSources,
             Scope.Main,
+            dependsOn = b.buildDependencies,
             actualCompiler = docCompiler
           )))
       }
@@ -352,11 +525,12 @@ object Build {
                       testOptions0,
                       testSources,
                       Scope.Test,
+                      dependsOn = Nil,
                       actualCompiler = actualCompiler
                     )
                   case _ =>
                     Right(Build.Cancelled(
-                      inputs,
+                      b.cm.module.inputs,
                       sharedOptions,
                       Scope.Test,
                       "Parent build failed or cancelled"
@@ -379,14 +553,16 @@ object Build {
       NonCrossBuilds(mainBuild, testBuildOpt0, mainDocBuildOpt, docTestBuildOpt0)
     }
 
-    def buildScopes(): Either[BuildException, Builds] =
+    def buildScopes(b: PreBuild): Either[BuildException, Builds] =
       either {
-        val nonCrossBuilds = value(doBuild(BuildOptions()))
+        import b.cm.crossOptions
+
+        val nonCrossBuilds = value(doBuild(b, BuildOptions()))
 
         val (extraMainBuilds, extraTestBuilds, extraDocBuilds, extraDocTestBuilds) =
           if (crossBuilds) {
             val extraBuilds = value {
-              val maybeBuilds = crossOptions.map(doBuild)
+              val maybeBuilds = crossOptions.map(doBuild(b, _))
 
               maybeBuilds
                 .sequence
@@ -410,18 +586,69 @@ object Build {
         )
       }
 
-    val builds = value(buildScopes())
-
-    ResourceMapper.copyResourceToClassesDir(builds.main)
-    for (testBuild <- builds.get(Scope.Test))
-      ResourceMapper.copyResourceToClassesDir(testBuild)
-
-    if (actionableDiagnostics.getOrElse(true)) {
-      val projectOptions = builds.get(Scope.Test).getOrElse(builds.main).options
-      projectOptions.logActionableDiagnostics(logger)
+    logger.debug {
+      val preBuildsD = preBuilds.map { p =>
+        s"${p.cm.bloopName}: ${p.buildDependencies.mkString(", ")}"
+      }.mkString("\n")
+      s"Pre-builds:\n$preBuildsD"
     }
 
-    builds
+    val preBuilds0 = Dag.topologicalSort(preBuilds) // TODO: parallelize steps
+
+    logger.debug {
+      val debugged = preBuilds0.zipWithIndex.map { (stage, i) =>
+        s"$i: ${stage.map(_.cm.bloopName).mkString(", ")}"
+      }.mkString("\n")
+      s"Build stages:\n$debugged"
+    }
+
+    val res = preBuilds0.flatten.foldLeft(Map.empty[String, Builds]) { (acc, b) =>
+      for generator <- b.cm.module.resourceGenerators do {
+        // TODO: optimise
+        val targetName = crossModules.find(_.module.projectName == generator.module).get.bloopName
+        acc(targetName).main match
+          case build: Successful =>
+            if build.refreshed || value(generator.shouldPackage(logger)) then
+              val taskId    = new bsp4j.TaskId(UUID.randomUUID().toString)
+              val taskStart = new bsp4j.TaskStartParams(taskId)
+              taskStart.setMessage(s"Packaging $targetName")
+              buildClient.onBuildTaskStart(taskStart)
+
+              generator.doPackage(logger, build) match
+                case Right(()) =>
+                  val taskFinish = new TaskFinishParams(taskId, bsp4j.StatusCode.OK)
+                  taskFinish.setMessage(s"Packaged $targetName")
+                  buildClient.onBuildTaskFinish(taskFinish)
+                case err @ Left(ex) =>
+                  val taskFinish = new TaskFinishParams(taskId, bsp4j.StatusCode.ERROR)
+                  taskFinish.setMessage(s"error when packaging $targetName: ${ex.getMessage}")
+                  buildClient.onBuildTaskFinish(taskFinish)
+                  value(err)
+          case _ =>
+            ()
+      }
+
+      val builds = value(buildScopes(b))
+
+      val moduleProjectName = b.cm.platform.map(_ => b.cm.module.projectName)
+
+      ResourceMapper.copyResourceToClassesDir(builds.main, moduleProjectName, configDir)
+      for (testBuild <- builds.get(Scope.Test))
+        ResourceMapper.copyResourceToClassesDir(testBuild, moduleProjectName, configDir)
+
+      if (actionableDiagnostics.getOrElse(true)) {
+        val projectOptions = builds.get(Scope.Test).getOrElse(builds.main).options
+        projectOptions.logActionableDiagnostics(logger)
+      }
+
+      acc + (b.cm.bloopName -> builds)
+    }
+
+    val resultLookup = crossModules.map { cm =>
+      cm.module.projectName -> res(cm.bloopName)
+    }.groupMap((k, _) => k)((_, v) => v)
+
+    resultLookup
   }
 
   private def build(
@@ -435,7 +662,11 @@ object Build {
     compiler: ScalaCompiler,
     buildTests: Boolean,
     partial: Option[Boolean],
-    actionableDiagnostics: Option[Boolean]
+    actionableDiagnostics: Option[Boolean],
+    moduleProjectName: Option[String],
+    optPlatform: Option[Platform],
+    dependsOn: List[String],
+    workspace: Option[os.Path]
   )(using ScalaCliInvokeData): Either[BuildException, Build] = either {
 
     val build0 = value {
@@ -448,7 +679,11 @@ object Build {
         logger,
         buildClient,
         compiler,
-        partial
+        partial,
+        moduleProjectName = moduleProjectName,
+        optPlatform = optPlatform,
+        dependsOn = dependsOn,
+        workspace = workspace
       )
     }
 
@@ -561,6 +796,9 @@ object Build {
       }
     }
 
+  private def inputsToModules(inputs: Inputs): Seq[BuildModule] =
+    Seq(BuildModule(inputs, inputs.projectName, Nil, Nil, Nil))
+
   def build(
     inputs: Inputs,
     options: BuildOptions,
@@ -571,15 +809,50 @@ object Build {
     buildTests: Boolean,
     partial: Option[Boolean],
     actionableDiagnostics: Option[Boolean]
-  )(using ScalaCliInvokeData): Either[BuildException, Builds] = {
+  )(using ScalaCliInvokeData): Either[BuildException, Builds] = either {
+    val modules = inputsToModules(inputs)
+    val res = value(build0(
+      modules,
+      options,
+      compilerMaker,
+      docCompilerMakerOpt,
+      logger,
+      crossBuilds,
+      buildTests,
+      partial,
+      actionableDiagnostics,
+      configDir = None
+    ))
+    res.head(1).head // extract the first build
+  }
+
+  def build0(
+    modules: Seq[BuildModule],
+    options: BuildOptions,
+    compilerMaker: ScalaCompilerMaker,
+    docCompilerMakerOpt: Option[ScalaCompilerMaker],
+    logger: Logger,
+    crossBuilds: Boolean,
+    buildTests: Boolean,
+    partial: Option[Boolean],
+    actionableDiagnostics: Option[Boolean],
+    configDir: Option[os.Path]
+  )(using ScalaCliInvokeData): Either[BuildException, Map[String, Seq[Builds]]] = {
     val buildClient = BloopBuildClient.create(
       logger,
-      keepDiagnostics = options.internal.keepDiagnostics
+      keepDiagnostics = options.internal.keepDiagnostics,
+      configDir = configDir
     )
-    val classesDir0 = classesRootDir(inputs.workspace, inputs.projectName)
+
+    val workspace = configDir.getOrElse(modules.head.inputs.workspace)
+
+    val classesDir0 = classesRootDir(
+      workspace,
+      modules.head.projectName
+    )
 
     compilerMaker.withCompiler(
-      inputs.workspace / Constants.workspaceDirName,
+      workspace / Constants.workspaceDirName,
       classesDir0,
       buildClient,
       logger
@@ -587,7 +860,7 @@ object Build {
       docCompilerMakerOpt match {
         case None =>
           build(
-            inputs = inputs,
+            modules = modules,
             options = options,
             logger = logger,
             buildClient = buildClient,
@@ -596,17 +869,18 @@ object Build {
             crossBuilds = crossBuilds,
             buildTests = buildTests,
             partial = partial,
-            actionableDiagnostics = actionableDiagnostics
+            actionableDiagnostics = actionableDiagnostics,
+            configDir = configDir
           )
         case Some(docCompilerMaker) =>
           docCompilerMaker.withCompiler(
-            inputs.workspace / Constants.workspaceDirName,
+            workspace / Constants.workspaceDirName,
             classesDir0, // ???
             buildClient,
             logger
           ) { docCompiler =>
             build(
-              inputs = inputs,
+              modules = modules,
               options = options,
               logger = logger,
               buildClient = buildClient,
@@ -615,7 +889,8 @@ object Build {
               crossBuilds = crossBuilds,
               buildTests = buildTests,
               partial = partial,
-              actionableDiagnostics = actionableDiagnostics
+              actionableDiagnostics = actionableDiagnostics,
+              configDir = configDir
             )
           }
       }
@@ -671,7 +946,7 @@ object Build {
     def run(): Unit = {
       try {
         res = build(
-          inputs,
+          inputsToModules(inputs),
           options,
           logger,
           buildClient,
@@ -680,8 +955,9 @@ object Build {
           crossBuilds = crossBuilds,
           buildTests = buildTests,
           partial = partial,
-          actionableDiagnostics = actionableDiagnostics
-        )
+          actionableDiagnostics = actionableDiagnostics,
+          configDir = None
+        ).map(_.head(1).head) // Map("project3282" -> Seq(Builds(...))) => extract the Build
         action(res)
       }
       catch {
@@ -801,8 +1077,6 @@ object Build {
     else
       Some(javaHome.value.version)
   }
-
-  case class ResourceGenerator(module: String, inputDir: os.Path, outputDir: os.Path)
 
   /** Builds a Bloop project.
     *
@@ -1153,6 +1427,7 @@ object Build {
     val success = partial || compiler.compile(project, logger)
 
     if (success)
+      val refreshed = buildClient.compileTasks.exists(_.exists(_ == project.projectName))
       Successful(
         inputs,
         options,
@@ -1164,7 +1439,8 @@ object Build {
         classesDir0,
         buildClient.diagnostics,
         generatedSources,
-        partial
+        partial,
+        refreshed
       )
     else
       Failed(
@@ -1321,7 +1597,7 @@ object Build {
       )
       val jmhBuilds = value {
         Build.build(
-          jmhInputs,
+          inputsToModules(jmhInputs),
           updatedOptions,
           logger,
           buildClient,
@@ -1330,9 +1606,10 @@ object Build {
           crossBuilds = false,
           buildTests = buildTests,
           partial = None,
-          actionableDiagnostics = actionableDiagnostics
+          actionableDiagnostics = actionableDiagnostics,
+          configDir = None
         )
-      }
+      }.head(1).head // extract the first build from the map
       Some(jmhBuilds.main)
     }
     else None
@@ -1365,5 +1642,64 @@ object Build {
       .inheritIO()
       .start()
       .waitFor()
+  }
+
+  trait ModuleLike[T] {
+    def id(t: T): String
+
+    // def weight(t: T): Int
+
+    def dependsOn(t: T): Seq[String]
+  }
+
+  object ModuleLike {
+    inline def apply[T](using m: ModuleLike[T]): m.type = m
+  }
+
+  object Dag {
+    def topologicalSort[T: ModuleLike](modules: Seq[T]): Seq[Seq[T]] = {
+      import scala.collection.mutable
+      import scala.annotation.tailrec
+
+      val byId   = modules.map(m => ModuleLike[T].id(m) -> m).toMap
+      val lookup = byId.map((id, m) => id -> ModuleLike[T].dependsOn(m))
+
+      val outgoingEdges =
+        lookup.map((k, v) => k -> v.to(mutable.LinkedHashSet))
+
+      val incomingEdges: mutable.SeqMap[String, mutable.LinkedHashSet[String]] =
+        val buf = mutable.LinkedHashMap.empty[String, mutable.LinkedHashSet[String]]
+        for (k, v) <- lookup do
+          buf.getOrElseUpdate(k, mutable.LinkedHashSet.empty[String])
+          for dep <- v do
+            buf.getOrElseUpdate(dep, mutable.LinkedHashSet.empty[String]).addOne(k)
+        buf
+
+      val sNext = mutable.ListBuffer.empty[String]
+
+      @tailrec
+      def iterate(s1: List[String], acc: List[List[String]]): List[List[T]] =
+        sNext.clear()
+
+        for target <- s1 do
+          val outgoing = outgoingEdges(target)
+          for dep <- outgoing.toList do
+            val incoming = incomingEdges(dep)
+            outgoing -= dep
+            incoming -= target
+            if incoming.isEmpty then
+              sNext += dep
+
+        if sNext.isEmpty then
+          acc.map(_.map(byId(_)))
+        else
+          val s2 = sNext.toList
+          iterate(s2, s2 :: acc)
+      end iterate
+
+      val s0 =
+        incomingEdges.collect { case (target, incoming) if incoming.isEmpty => target }.toList
+      iterate(s0, s0 :: Nil)
+    }
   }
 }

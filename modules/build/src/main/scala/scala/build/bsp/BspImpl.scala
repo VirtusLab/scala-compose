@@ -381,7 +381,7 @@ final class BspImpl(
       val preBuilds: Seq[PreBuildProject] =
         value(prepareBuild(currentBloopSession, reloadableOptions))
 
-      val sorted = BspImpl.Dag.topologicalSort(preBuilds).flatten // TODO: parallelize levels
+      val sorted = Build.Dag.topologicalSort(preBuilds).flatten // TODO: parallelize levels
 
       val builds = sorted.foldLeft(Map.empty[String, Build]) { (acc, preBuild) =>
         val mainChanged = preBuild.mainScope.buildChanged
@@ -954,6 +954,7 @@ object BspImpl {
     def underlying: scala.build.bsp.BspClient = actualLocalClient
     def clear()                               = underlying.clear()
     def diagnostics                           = underlying.diagnostics
+    def compileTasks                          = underlying.compileTasks
     def setProjectParams(newParams: Seq[String]) =
       underlying.setProjectParams(newParams)
     def setGeneratedSources(scope: Scope, newGeneratedSources: Seq[GeneratedSource]) =
@@ -981,109 +982,12 @@ object BspImpl {
   )
 
   private object PreBuildProject {
-    given asModule: ModuleLike[PreBuildProject] with {
+    given asModule: Build.ModuleLike[PreBuildProject] with {
       def id(t: PreBuildProject): String = t.mainScope.project.projectName
-      def weight(t: PreBuildProject): Int =
-        1 // if some targets take longer to build, we could factor that in here
+      // def weight(t: PreBuildProject): Int =
+      //   1 // if some targets take longer to build, we could factor that in here
       def dependsOn(t: PreBuildProject): Seq[String] =
         t.mainScope.dependsOn
-    }
-  }
-
-  trait ModuleLike[T] {
-    def id(t: T): String
-    def weight(t: T): Int
-    def dependsOn(t: T): Seq[String]
-  }
-
-  object ModuleLike {
-    inline def apply[T](using m: ModuleLike[T]): m.type = m
-  }
-
-  object Dag {
-    def topologicalSort[T: ModuleLike](modules: Seq[T]): Seq[Seq[T]] = {
-      import scala.collection.mutable
-      import scala.annotation.tailrec
-
-      val byId   = modules.map(m => ModuleLike[T].id(m) -> m).toMap
-      val lookup = byId.map((id, m) => id -> ModuleLike[T].dependsOn(m))
-
-      val outgoingEdges =
-        lookup.map((k, v) =>
-          k -> v.map(dep => dep -> ModuleLike[T].weight(byId(dep))).to(mutable.LinkedHashMap)
-        )
-
-      val incomingEdges: mutable.SeqMap[String, mutable.LinkedHashMap[String, Int]] =
-        val buf = mutable.LinkedHashMap.empty[String, mutable.LinkedHashMap[String, Int]]
-        for (k, v) <- lookup do
-          buf.getOrElseUpdate(k, mutable.LinkedHashMap.empty[String, Int])
-          for dep <- v do
-            buf.getOrElseUpdate(dep, mutable.LinkedHashMap.empty[String, Int]).update(
-              k,
-              ModuleLike[T].weight(byId(dep))
-            )
-        buf
-
-      val sNext     = mutable.LinkedHashSet.empty[String]
-      val sLeftOver = mutable.LinkedHashMap.empty[String, mutable.LinkedHashSet[String]]
-
-      @tailrec
-      def iterate(s1: List[String], s0: List[String], acc: List[List[String]]): List[List[T]] =
-        sNext.clear()
-        sLeftOver.clear()
-
-        // reset weights of targets that are in s0
-        for target <- s0 do
-          val outgoing = outgoingEdges(target)
-          for dep <- outgoing.keySet do
-            val depM     = byId(dep)
-            val incoming = incomingEdges(dep)
-            incoming(target) = ModuleLike[T].weight(depM)
-            outgoing(dep) = ModuleLike[T].weight(depM)
-
-        val sAll = s1 ::: s0
-
-        val maxWeight = sAll.flatMap(t => outgoingEdges(t).values.maxOption).maxOption.getOrElse(1)
-        val minWeight = sAll.flatMap(t => outgoingEdges(t).values.minOption).minOption.getOrElse(1)
-        val decrementBy = minWeight
-
-        extension [K](assoc: mutable.LinkedHashMap[K, Int])
-          def decrement(t: K): Option[Int] =
-            assoc.updateWith(t) {
-              case Some(n) if n > decrementBy => Some(n - decrementBy)
-              case _                          => None
-            }
-
-        def once(): Unit =
-          for target <- sAll do
-            val outgoing = outgoingEdges(target)
-            for dep <- outgoing.keySet do
-              val incoming = incomingEdges(dep)
-              ((outgoing.decrement(dep), incoming.decrement(target)): @unchecked) match
-                case (None, None) =>
-                  sNext += dep
-                case (Some(_), Some(_)) =>
-                  sLeftOver.getOrElseUpdate(dep, mutable.LinkedHashSet.empty) += target
-
-        var iterated  = 0
-        var countDown = (maxWeight - minWeight) / decrementBy
-        while
-          once()
-          iterated += 1
-          sNext.isEmpty && countDown > 0
-        do
-          countDown -= 1
-        if sNext.isEmpty then
-          acc.map(_.map(byId(_)))
-        else
-          val s2    = sNext.toList
-          val sRest = (sLeftOver --= s2).values.flatten.toList.distinct
-          iterate(s2, sRest, s2 :: acc)
-      end iterate
-
-      val s0 =
-        incomingEdges.collect { case (target, incoming) if incoming.isEmpty => target }.toList
-      iterate(s0, Nil, s0 :: Nil)
     }
   }
 }

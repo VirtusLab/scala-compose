@@ -37,6 +37,20 @@ object SetupIde extends ScalaCommand[SetupIdeOptions] {
 
   override def sharedOptions(options: SetupIdeOptions): Option[SharedOptions] = Some(options.shared)
 
+  def runSafe(
+    options: SharedOptions,
+    configDir: os.Path,
+    args: Seq[String]
+  ): Unit =
+    writeBspConfiguration(
+      SetupIdeOptions(shared = options, confDir = configDir.toNIO.toString),
+      args
+    ) match {
+      case Left(ex) =>
+        logger.debug(s"Ignoring error during setup-ide: ${ex.message}")
+      case Right(_) =>
+    }
+
   private def writeBspConfiguration(
     options: SetupIdeOptions,
     args: Seq[String]
