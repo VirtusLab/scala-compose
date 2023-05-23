@@ -466,10 +466,23 @@ object Build {
     }
   }
 
+  def packagedRootDir(root: os.Path, projectName: String): os.Path =
+    root / Constants.workspaceDirName / projectName / "bin"
+  def resourcesRootDir(root: os.Path, projectName: String): os.Path =
+    root / Constants.workspaceDirName / projectName / "managed-resources"
   def classesRootDir(root: os.Path, projectName: String): os.Path =
     root / Constants.workspaceDirName / projectName / "classes"
-  def classesDir(root: os.Path, projectName: String, scope: Scope, suffix: String = ""): os.Path =
-    classesRootDir(root, projectName) / s"${scope.name}$suffix"
+  def classesDir(
+    root: os.Path,
+    projectName: String,
+    scope: Scope,
+    suffix: String = "",
+    optPlatform: Option[Platform] = None
+  ): os.Path =
+    val pre = classesRootDir(root, projectName) / s"${scope.name}$suffix"
+    optPlatform match
+      case Some(platform) => pre / Platform.normalize(platform.repr)
+      case None           => pre
 
   def resourcesRegistry(
     root: os.Path,
@@ -771,6 +784,8 @@ object Build {
       Some(javaHome.value.version)
   }
 
+  case class ResourceGenerator(module: String, inputDir: os.Path, outputDir: os.Path)
+
   /** Builds a Bloop project.
     *
     * @param inputs
@@ -804,6 +819,7 @@ object Build {
     artifacts: Artifacts,
     maybeRecoverOnError: BuildException => Option[BuildException] = e => Some(e),
     moduleProjectName: Option[String] = None,
+    optPlatform: Option[Platform] = None,
     dependsOn: List[String] = Nil,
     workspacePath: Option[os.Path] = None
   ): Either[BuildException, Project] = either {
@@ -814,12 +830,17 @@ object Build {
 
     val mainProjectName = moduleProjectName.getOrElse(inputs.projectName)
     val scopedProjectName =
-      moduleProjectName
-        .map(name => if scope == Scope.Main then name else s"$name-${scope.name}")
-        .getOrElse(inputs.scopeProjectName(scope))
+      (moduleProjectName, optPlatform) match
+        case (Some(moduleName), Some(platform0)) =>
+          val baseName =
+            if platform0 == Platform.JVM then moduleName
+            else s"$moduleName-${Platform.normalize(platform0.repr)}"
+          if scope == Scope.Main then baseName else s"$baseName-${scope.name}"
+        case _ => inputs.scopeProjectName(scope)
 
-    val classesDir0 = classesDir(workspace, mainProjectName, scope)
-    val scaladocDir = classesDir(workspace, mainProjectName, scope, suffix = "-doc")
+    val classesDir0 = classesDir(workspace, mainProjectName, scope, optPlatform = optPlatform)
+    val scaladocDir =
+      classesDir(workspace, mainProjectName, scope, suffix = "-doc", optPlatform = optPlatform)
 
     val generateSemanticDbs = options.scalaOptions.generateSemanticDbs.getOrElse(false)
 
@@ -934,7 +955,7 @@ object Build {
     // `test` scope should contains class path to main scope
     val mainClassesPath =
       if (scope == Scope.Test)
-        List(classesDir(workspace, mainProjectName, Scope.Main))
+        List(classesDir(workspace, mainProjectName, Scope.Main, optPlatform = optPlatform))
       else Nil
 
     value(validate(logger, options))
@@ -982,6 +1003,7 @@ object Build {
     buildClient: BloopBuildClient,
     maybeRecoverOnError: BuildException => Option[BuildException] = e => Some(e),
     moduleProjectName: Option[String] = None,
+    optPlatform: Option[Platform] = None,
     dependsOn: List[String] = Nil,
     workspace: Option[os.Path] = None
   ): Either[BuildException, (os.Path, Option[ScalaParameters], Artifacts, Project, Boolean)] =
@@ -1006,9 +1028,11 @@ object Build {
 
       buildClient.setProjectParams(scopeParams ++ value(options0.projectParams))
 
-      val classesDir0 = (workspace, moduleProjectName) match
-        case (Some(configDir), Some(projectN)) => classesDir(configDir, projectN, scope)
-        case _ => classesDir(inputs.workspace, inputs.projectName, scope)
+      val classesDir0 = (workspace, moduleProjectName, optPlatform) match
+        case (Some(configDir), Some(projectN), platform0 @ Some(_)) =>
+          classesDir(configDir, projectN, scope, optPlatform = platform0)
+        case _ =>
+          classesDir(inputs.workspace, inputs.projectName, scope)
 
       val artifacts = value(options0.artifacts(logger, scope, maybeRecoverOnError))
 
@@ -1026,6 +1050,7 @@ object Build {
           artifacts,
           maybeRecoverOnError,
           moduleProjectName = moduleProjectName,
+          optPlatform = optPlatform,
           dependsOn,
           workspace
         )
@@ -1059,6 +1084,7 @@ object Build {
     compiler: ScalaCompiler,
     partialOpt: Option[Boolean],
     moduleProjectName: Option[String] = None,
+    optPlatform: Option[Platform] = None,
     dependsOn: List[String] = Nil,
     workspace: Option[os.Path] = None
   ): Either[BuildException, Build] = either {
@@ -1082,6 +1108,7 @@ object Build {
         buildClient,
         dependsOn = dependsOn,
         moduleProjectName = moduleProjectName,
+        optPlatform = optPlatform,
         workspace = workspace
       )
     }

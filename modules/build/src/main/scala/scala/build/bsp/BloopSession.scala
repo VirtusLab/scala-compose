@@ -2,24 +2,41 @@ package scala.build.bsp
 
 import com.swoval.files.PathWatchers
 
+import scala.build.errors.BuildException
 import java.util.concurrent.atomic.AtomicReference
-import scala.build.{Build, ScopedSources, CrossSources}
+import scala.build.{Build, CrossSources, ScopedSources}
 import scala.build.compiler.BloopCompiler
 import scala.build.input.{Inputs, OnDisk, SingleFile, Virtual}
+import scala.build.options.Platform
 
 case class Module(
   inputs: Inputs,
   inputsHash: String,
   projectName: String,
   dependsOn: List[String],
-  platforms: List[String]
+  platforms: List[String],
+  resourceGenerators: List[(
+    String,
+    (BspReloadableOptions) => Either[BuildException, Boolean],
+    (BspReloadableOptions, Build.Successful) => Either[BuildException, Unit]
+  )] // TODO: so far just which modules to package as a resource
 )
 final case class CrossModule(
   module: Module,
   allInputs: Inputs,
   crossSources: CrossSources,
-  scopedSources: ScopedSources
-)
+  scopedSources: ScopedSources,
+  platform: Option[Platform]
+) {
+  val bloopName: Option[String] =
+    platform match
+      case Some(platform) =>
+        Some(
+          if platform == Platform.JVM then module.projectName
+          else s"${module.projectName}-${Platform.normalize(platform.repr)}"
+        )
+      case None => None
+}
 
 final class BloopSession(
   val modules: Seq[Module],
@@ -86,6 +103,19 @@ object BloopSession {
       Option(ref.getAndSet(null))
     def update(former: BloopSession, newer: BloopSession, ifError: String): Unit =
       if (!ref.compareAndSet(former, newer))
+        sys.error(ifError)
+  }
+
+  final class BuildsReference {
+    private val ref = new AtomicReference[Map[String, Build]](null)
+    def get(): Option[Map[String, Build]] =
+      Some(ref.get())
+    def update(
+      former: Option[Map[String, Build]],
+      newer: Map[String, Build],
+      ifError: String
+    ): Unit =
+      if (!ref.compareAndSet(former.orNull, newer))
         sys.error(ifError)
   }
 }

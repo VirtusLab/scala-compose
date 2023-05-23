@@ -6,6 +6,7 @@ import com.github.plokhotnyuk.jsoniter_scala.core.*
 import scala.build.EitherCps.{either, value}
 import scala.build.*
 import scala.build.bsp.{BspReloadableOptions, BspThreads}
+import scala.build.options.{PackageOptions, PackageType}
 import scala.build.errors.BuildException
 import scala.build.input.Inputs
 import scala.build.internal.CustomCodeWrapper
@@ -16,9 +17,11 @@ import scala.cli.commands.publish.ConfigUtil.*
 import scala.cli.commands.shared.SharedOptions
 import scala.cli.config.{ConfigDb, Keys}
 import scala.compose.builder.*
+import scala.compose.builder.targets.{Target, TargetKind}
 import scala.compose.builder.errors.*
 import scala.concurrent.Await
 import scala.concurrent.duration.Duration
+
 object Bsp extends ScalaCommand[BspOptions] {
   override def hidden                  = true
   override def scalaSpecificationLevel = SpecificationLevel.IMPLEMENTATION
@@ -31,13 +34,13 @@ object Bsp extends ScalaCommand[BspOptions] {
     Option(latestSharedOptions(options))
 
   // not reusing buildOptions here, since they should be reloaded live instead
-  override def runCommand(options: BspOptions, args: RemainingArgs, logger: Logger): Unit = Result {
+  override def runCommand(options: BspOptions, args: RemainingArgs, logger: Logger): Unit = {
 
     val getSharedOptions: () => SharedOptions = () => latestSharedOptions(options)
     val configDir                             = os.Path(options.confDir, Os.pwd)
 
-    val argsToInputs: (Module, Seq[String]) => Either[BuildException, Inputs] =
-      (module, argsSeq) =>
+    val argsToInputs: Seq[String] => Either[BuildException, Inputs] =
+      argsSeq =>
         either {
           val sharedOptions = getSharedOptions()
           val initialInputs = value(sharedOptions.inputs(argsSeq, () => Inputs.default()))
@@ -78,32 +81,92 @@ object Bsp extends ScalaCommand[BspOptions] {
     val actionableDiagnostics =
       options.shared.logging.verbosityOptions.actions
 
-    val config: Config = Settings(false, false, parseConfig(Some(configDir)).?).config
-    val modules: Seq[scala.build.bsp.Module] =
-      val ms =
-        for
-          (_, m) <- config.modules.iterator
-        yield
-          val inputsRaw = Seq((configDir / m.root).toString())
+    class ScalaComposeException(msg: String) extends BuildException(msg)
 
-          val inputs = argsToInputs(
-            m,
-            inputsRaw
-          ).getOrElse(sys.error(s"Failed to parse inputs: ${m.root}"))
-
-          scala.build.bsp.Module(
-            inputs,
-            inputs.sourceHash(),
-            m.name,
-            m.dependsOn,
-            m.platforms.map(_.toString)
-          )
-        end for
-      ms.toSeq
-    end modules
+    extension [V](res: Result[V, String])
+      private def asBuildFailure = res.toEither.left.map(ScalaComposeException(_))
 
     val argsToInputsModule: Seq[String] => Either[BuildException, Seq[scala.build.bsp.Module]] =
-      _ => Right(modules)
+      _ =>
+        either {
+          val configLocation = value(configFile(Some(configDir)).asBuildFailure)
+          val config: Config = value(parseConfig(configLocation).asBuildFailure)
+          val ms =
+            for
+              (_, m) <- config.modules.iterator
+            yield
+              val inputsRaw = Seq((configDir / m.root).toString())
+
+              val inputs = value(argsToInputs(inputsRaw))
+
+              val doPackage = (pkgType: PackageType, fromModule: String, nuDest: os.RelPath) =>
+                (reloadableOptions: BspReloadableOptions, build: Build.Successful) =>
+                  either {
+                    import scala.cli.commands.package0.Package
+                    import scala.cli.commands.shared.MainClassOptions
+
+                    val logger = reloadableOptions.logger
+
+                    val packageDestDir = Build.packagedRootDir(configDir, fromModule)
+
+                    os.makeDir.all(packageDestDir)
+
+                    val packageDestPath = (pkgType: @unchecked) match
+                      case PackageType.Js => packageDestDir / "main.js"
+
+                    val _ = value(Package.doPackage0(
+                      logger = logger,
+                      outputOpt = Some(packageDestPath.toString),
+                      force = true,
+                      forcedPackageTypeOpt = Some(pkgType),
+                      build = build,
+                      extraArgs = Nil,
+                      expectedModifyEpochSecondOpt = None,
+                      allowTerminate = false,
+                      mainClassOptions = MainClassOptions()
+                    ))
+
+                    val finalDest = Build.resourcesRootDir(configDir, m.name) / nuDest
+
+                    os.copy(
+                      packageDestPath,
+                      finalDest,
+                      createFolders = true,
+                      replaceExisting = true
+                    )
+
+                    ()
+                  }
+
+              scala.build.bsp.Module(
+                inputs,
+                inputs.sourceHash(),
+                m.name,
+                m.dependsOn,
+                m.platforms.map(_.toString),
+                m.resourceGenerators.flatMap {
+                  case ResourceGenerator.Copy(Target(module, TargetKind.Package), dest) =>
+                    val dest0      = os.RelPath(dest)
+                    val fromModule = config.modules(module)
+
+                    val doUpdate = (reloadableOptions: BspReloadableOptions) =>
+                      either {
+                        !os.exists(Build.resourcesRootDir(configDir, m.name) / dest0)
+                      }
+
+                    fromModule.platforms match
+                      case Seq(PlatformKind.`scala-js`) =>
+                        Some((module, doUpdate, doPackage(PackageType.Js, module, dest0)))
+                      case _ => None
+                  case _ => None
+                }
+              )
+            end for
+          end ms
+          ms.toSeq
+        }
+
+    val modules = argsToInputsModule(Seq()).orExit(logger)
 
     BspThreads.withThreads { threads =>
       val bsp = scala.build.bsp.Bsp.create(

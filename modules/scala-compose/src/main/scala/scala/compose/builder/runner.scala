@@ -154,9 +154,12 @@ def showConfig()(using Settings): Unit =
 def validate(): Unit =
   println("config is valid")
 
-def parseConfig(workspace: Option[os.Path] = None): Result[Config, String] =
+def configFile(workspace: Option[os.Path] = None): Result[os.Path, String] =
   val location = workspace.getOrElse(os.pwd) / "builder.toml"
+  if os.exists(location) then Result.Success(location)
+  else Result.Failure(s"There is no existing config file at $location")
 
+def parseConfig(location: os.Path): Result[Config, String] =
   def readConfig() =
     Result.attempt {
       os.read(location)
@@ -203,7 +206,8 @@ def writeCacheDiff(project: targets.Targets, initial: targets.Targets)(using
 
 def execCommand(command: ConsoleCommand): Result[Unit, String] =
   Result {
-    val settings   = Settings(command.debug, command.sequential, parseConfig().?)
+    val location   = configFile().?
+    val settings   = Settings(command.debug, command.sequential, parseConfig(location).?)
     given Settings = settings
     command.sub match
       case Run(project)   => run(project).?
