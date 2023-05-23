@@ -60,9 +60,15 @@ object ResourceMapper {
     * Remembering the mapping this way allows for the resource to be removed if the original file is
     * renamed/deleted.
     */
-  def copyResourceToClassesDir(build: Build): Unit = build match {
+  def copyResourceToClassesDir(
+    build: Build,
+    moduleProjectName: Option[String],
+    configDir: Option[os.Path]
+  ): Unit = build match {
     case b: Build.Successful =>
-      val fullFilePath = Build.resourcesRegistry(b.inputs.workspace, b.inputs.projectName, b.scope)
+      val workspace    = configDir.getOrElse(b.inputs.workspace)
+      val projectName  = moduleProjectName.getOrElse(b.inputs.projectName)
+      val fullFilePath = Build.resourcesRegistry(workspace, projectName, b.scope)
       copyResourcesToDirWithMapping(b.output, fullFilePath, resourceMapping(b))
     case _ =>
   }

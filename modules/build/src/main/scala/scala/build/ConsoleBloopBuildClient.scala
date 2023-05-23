@@ -12,23 +12,33 @@ import scala.build.options.Scope
 import scala.collection.mutable
 import scala.jdk.CollectionConverters.*
 
+import com.google.gson
+
 class ConsoleBloopBuildClient(
   logger: Logger,
   keepDiagnostics: Boolean = false,
-  generatedSources: mutable.Map[Scope, Seq[GeneratedSource]] = mutable.Map()
+  generatedSources: mutable.Map[Scope, Seq[GeneratedSource]] = mutable.Map(),
+  configDir: Option[os.Path] = None
 ) extends BloopBuildClient {
   import ConsoleBloopBuildClient._
   private var projectParams = Seq.empty[String]
+
+  def this(
+    logger: Logger,
+    keepDiagnostics: Boolean,
+    generatedSources: mutable.Map[Scope, Seq[GeneratedSource]]
+  ) = this(logger, keepDiagnostics, generatedSources, configDir = None)
 
   private def projectNameSuffix =
     if (projectParams.isEmpty) ""
     else " (" + projectParams.mkString(", ") + ")"
 
-  private def projectName = "project" + projectNameSuffix
+  private def projectName(id: Option[String]) = id.getOrElse("project") + projectNameSuffix
 
   private var printedStart = false
 
-  private val diagnostics0 = new mutable.ListBuffer[(Either[String, os.Path], bsp4j.Diagnostic)]
+  private val diagnostics0  = new mutable.ListBuffer[(Either[String, os.Path], bsp4j.Diagnostic)]
+  private val compileTasks0 = new mutable.ListBuffer[String]
 
   def setGeneratedSources(scope: Scope, newGeneratedSources: Seq[GeneratedSource]) =
     generatedSources(scope) = newGeneratedSources
@@ -38,6 +48,9 @@ class ConsoleBloopBuildClient(
   def diagnostics: Option[Seq[(Either[String, os.Path], bsp4j.Diagnostic)]] =
     if (keepDiagnostics) Some(diagnostics0.result())
     else None
+
+  def compileTasks: Option[Seq[String]] =
+    Some(compileTasks0.result())
 
   private def postProcessDiagnostic(
     path: os.Path,
@@ -113,7 +126,23 @@ class ConsoleBloopBuildClient(
     for (msg <- Option(params.getMessage) if !msg.contains(" no-op compilation")) {
       printedStart = true
       val msg0 =
-        if (params.getDataKind == "compile-task") s"Compiling $projectName"
+        if (params.getDataKind == "compile-task") {
+          val projectNameRef = configDir match
+            case Some(_) =>
+              val compileTask = new gson.Gson().fromJson[bsp4j.CompileTask](
+                params.getData.asInstanceOf[gson.JsonElement],
+                classOf[bsp4j.CompileTask]
+              )
+
+              val name = compileTask.getTarget().getUri() match {
+                case s"${_}?id=${name}" => name
+                case name               => name
+              }
+              Some(name)
+            case None => None
+
+          s"Compiling ${projectName(projectNameRef)}"
+        }
         else msg
       logger.message(gray + msg0 + reset)
     }
@@ -128,9 +157,24 @@ class ConsoleBloopBuildClient(
       for (msg <- Option(params.getMessage)) {
         val msg0 =
           if (params.getDataKind == "compile-report")
+            val projectNameRef = configDir match
+              case Some(_) =>
+                val compileReport = new gson.Gson().fromJson[bsp4j.CompileReport](
+                  params.getData.asInstanceOf[gson.JsonElement],
+                  classOf[bsp4j.CompileReport]
+                )
+
+                val name = compileReport.getTarget().getUri() match {
+                  case s"${_}?id=${name}" => name
+                  case name               => name
+                }
+                Some(name)
+              case None => None
             params.getStatus match {
-              case bsp4j.StatusCode.OK        => s"Compiled $projectName"
-              case bsp4j.StatusCode.ERROR     => s"Error compiling $projectName"
+              case bsp4j.StatusCode.OK =>
+                projectNameRef.foreach(compileTasks0 += _)
+                s"Compiled ${projectName(projectNameRef)}"
+              case bsp4j.StatusCode.ERROR     => s"Error compiling ${projectName(projectNameRef)}"
               case bsp4j.StatusCode.CANCELLED => s"Compilation cancelled$projectNameSuffix"
             }
           else msg
@@ -143,6 +187,7 @@ class ConsoleBloopBuildClient(
   def clear(): Unit = {
     generatedSources.clear()
     diagnostics0.clear()
+    compileTasks0.clear()
     printedStart = false
   }
 }
