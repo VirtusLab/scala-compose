@@ -21,7 +21,7 @@ jobs:
       with:
         fetch-depth: 0
         submodules: true
-    - uses: VirtusLab/scala-cli-setup@d37cecaf2c23ee668ec7e5da04eb6da66ae9fab6
+    - uses: VirtusLab/scala-cli-setup@49e973f40321361e27fe0847308da6d4f6461a45
       with:
         jvm: "temurin:17"
     - name: Copy launcher
@@ -47,7 +47,7 @@ jobs:
       with:
         fetch-depth: 0
         submodules: true
-    - uses: VirtusLab/scala-cli-setup@d37cecaf2c23ee668ec7e5da04eb6da66ae9fab6
+    - uses: VirtusLab/scala-cli-setup@49e973f40321361e27fe0847308da6d4f6461a45
       with:
         jvm: "temurin:17"
     - name: JVM integration tests
@@ -63,7 +63,7 @@ jobs:
       with:
         fetch-depth: 0
         submodules: true
-    - uses: VirtusLab/scala-cli-setup@d37cecaf2c23ee668ec7e5da04eb6da66ae9fab6
+    - uses: VirtusLab/scala-cli-setup@49e973f40321361e27fe0847308da6d4f6461a45
       with:
         jvm: "temurin:17"
     - name: JVM integration tests
@@ -79,7 +79,7 @@ jobs:
       with:
         fetch-depth: 0
         submodules: true
-    - uses: VirtusLab/scala-cli-setup@d37cecaf2c23ee668ec7e5da04eb6da66ae9fab6
+    - uses: VirtusLab/scala-cli-setup@49e973f40321361e27fe0847308da6d4f6461a45
       with:
         jvm: "temurin:17"
     - name: JVM integration tests
