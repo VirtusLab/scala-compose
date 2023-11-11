@@ -3,6 +3,7 @@ package scala.compose.builder
 import toml.Value.*
 import upickle.default.*
 
+import scala.annotation.targetName
 import scala.compose.builder.ModuleKind.{Application, Library}
 import scala.compose.builder.errors.*
 
@@ -120,7 +121,13 @@ case class Module(
 ) derives ReadWriter
 
 enum PlatformKind derives ReadWriter:
-  case `jvm`, `scala-js`, `scala-native`
+  case `jvm`
+
+  @targetName("scalaJs")
+  case `scala-js`
+
+  @targetName("scalaNative")
+  case `scala-native`
 
 object PlatformKind:
   private val byName = values.view.map(kind => kind.toString -> kind).toMap

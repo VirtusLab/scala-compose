@@ -282,33 +282,42 @@ object Build {
     configDir: Option[os.Path]
   )(using ScalaCliInvokeData): Either[BuildException, Map[String, Seq[Builds]]] = either {
 
-    val crossModules = modules.flatMap { module =>
-      // allInputs contains elements from using directives
-      val (crossSources, allInputs) = value {
-        CrossSources.forInputs(
-          module.inputs,
-          Sources.defaultPreprocessors(
-            options.scriptOptions.codeWrapper.getOrElse(CustomCodeWrapper),
-            options.archiveCache,
-            options.internal.javaClassNameVersionOpt,
-            () => options.javaHome().value.javaCommand
-          ),
-          logger,
-          options.suppressWarningOptions,
-          options.internal.exclude
-        )
+    import scala.concurrent.*
+    import scala.concurrent.ExecutionContext.Implicits.global
+
+    val crossModuleFutures = modules.map { module =>
+      Future {
+        blocking {
+          // allInputs contains elements from using directives
+          val (crossSources, allInputs) = value {
+            CrossSources.forInputs(
+              module.inputs,
+              Sources.defaultPreprocessors(
+                options.scriptOptions.codeWrapper.getOrElse(CustomCodeWrapper),
+                options.archiveCache,
+                options.internal.javaClassNameVersionOpt,
+                () => options.javaHome().value.javaCommand
+              ),
+              logger,
+              options.suppressWarningOptions,
+              options.internal.exclude
+            )
+          }
+          val sharedOptions: BuildOptions     = crossSources.sharedOptions(options)
+          val crossOptions: Seq[BuildOptions] = sharedOptions.crossOptions
+
+          def makeModule(platform: Option[Platform]) =
+            CrossBuildModule(module, crossSources, allInputs, sharedOptions, crossOptions, platform)
+
+          if module.platforms.isEmpty then
+            makeModule(None) :: Nil
+          else
+            module.platforms.map(p => makeModule(Some(p)))
+        }
       }
-      val sharedOptions: BuildOptions     = crossSources.sharedOptions(options)
-      val crossOptions: Seq[BuildOptions] = sharedOptions.crossOptions
-
-      def makeModule(platform: Option[Platform]) =
-        CrossBuildModule(module, crossSources, allInputs, sharedOptions, crossOptions, platform)
-
-      if module.platforms.isEmpty then
-        makeModule(None) :: Nil
-      else
-        module.platforms.map(p => makeModule(Some(p)))
     }
+
+    val crossModules = Await.result(Future.sequence(crossModuleFutures), duration.Duration.Inf).flatten
 
     val crossModuleLookup = crossModules.map(cm => (cm.module.projectName, cm.platform) -> cm).toMap
 
@@ -602,46 +611,57 @@ object Build {
       s"Build stages:\n$debugged"
     }
 
-    val res = preBuilds0.flatten.foldLeft(Map.empty[String, Builds]) { (acc, b) =>
-      for generator <- b.cm.module.resourceGenerators do {
-        // TODO: optimise
-        val targetName = crossModules.find(_.module.projectName == generator.module).get.bloopName
-        acc(targetName).main match
-          case build: Successful =>
-            if build.refreshed || value(generator.shouldPackage(logger)) then
-              val taskId    = new bsp4j.TaskId(UUID.randomUUID().toString)
-              val taskStart = new bsp4j.TaskStartParams(taskId)
-              taskStart.setMessage(s"Packaging $targetName")
-              buildClient.onBuildTaskStart(taskStart)
+    val res = preBuilds0.foldLeft(Map.empty[String, Builds]) { (acc, step) =>
+      val resultFutures = step.map { b =>
+        Future {
+          blocking {
+            for generator <- b.cm.module.resourceGenerators do {
+              // TODO: optimise
+              val targetName = crossModules.find(_.module.projectName == generator.module).get.bloopName
+              acc(targetName).main match
+                case build: Successful =>
+                  if build.refreshed || value(generator.shouldPackage(logger)) then
+                    val taskId    = new bsp4j.TaskId(UUID.randomUUID().toString)
+                    val taskStart = new bsp4j.TaskStartParams(taskId)
+                    taskStart.setMessage(s"Packaging $targetName")
+                    buildClient.onBuildTaskStart(taskStart)
 
-              generator.doPackage(logger, build) match
-                case Right(()) =>
-                  val taskFinish = new TaskFinishParams(taskId, bsp4j.StatusCode.OK)
-                  taskFinish.setMessage(s"Packaged $targetName")
-                  buildClient.onBuildTaskFinish(taskFinish)
-                case err @ Left(ex) =>
-                  val taskFinish = new TaskFinishParams(taskId, bsp4j.StatusCode.ERROR)
-                  taskFinish.setMessage(s"error when packaging $targetName: ${ex.getMessage}")
-                  buildClient.onBuildTaskFinish(taskFinish)
-                  value(err)
-          case _ =>
-            ()
+                    generator.doPackage(logger, build) match
+                      case Right(()) =>
+                        val taskFinish = new TaskFinishParams(taskId, bsp4j.StatusCode.OK)
+                        taskFinish.setMessage(s"Packaged $targetName")
+                        buildClient.onBuildTaskFinish(taskFinish)
+                      case err @ Left(ex) =>
+                        val taskFinish = new TaskFinishParams(taskId, bsp4j.StatusCode.ERROR)
+                        taskFinish.setMessage(s"error when packaging $targetName: ${ex.getMessage}")
+                        buildClient.onBuildTaskFinish(taskFinish)
+                        value(err)
+                case _ =>
+                  ()
+            }
+
+            val builds = value(buildScopes(b))
+
+            val moduleProjectName = b.cm.platform.map(_ => b.cm.module.projectName)
+
+            ResourceMapper.copyResourceToClassesDir(builds.main, moduleProjectName, configDir)
+            for (testBuild <- builds.get(Scope.Test))
+              ResourceMapper.copyResourceToClassesDir(testBuild, moduleProjectName, configDir)
+
+            if (actionableDiagnostics.getOrElse(true)) {
+              val projectOptions = builds.get(Scope.Test).getOrElse(builds.main).options
+              projectOptions.logActionableDiagnostics(logger)
+            }
+
+            b.cm.bloopName -> builds
+
+          }
+        }
       }
 
-      val builds = value(buildScopes(b))
+      val results = Await.result(Future.sequence(resultFutures), duration.Duration.Inf)
 
-      val moduleProjectName = b.cm.platform.map(_ => b.cm.module.projectName)
-
-      ResourceMapper.copyResourceToClassesDir(builds.main, moduleProjectName, configDir)
-      for (testBuild <- builds.get(Scope.Test))
-        ResourceMapper.copyResourceToClassesDir(testBuild, moduleProjectName, configDir)
-
-      if (actionableDiagnostics.getOrElse(true)) {
-        val projectOptions = builds.get(Scope.Test).getOrElse(builds.main).options
-        projectOptions.logActionableDiagnostics(logger)
-      }
-
-      acc + (b.cm.bloopName -> builds)
+      results.foldLeft(acc)(_ + _)
     }
 
     val resultLookup = crossModules.map { cm =>
