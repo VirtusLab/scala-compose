@@ -178,7 +178,8 @@ object Run extends ScalaCommand[RunOptions] with BuildCommandHelpers {
             potentialMainClasses,
             runMode,
             showCommand,
-            scratchDirOpt
+            scratchDirOpt,
+            asJar = options.shared.asJar
           )
         }
 

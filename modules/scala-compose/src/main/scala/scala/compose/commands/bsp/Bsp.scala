@@ -6,10 +6,9 @@ import com.github.plokhotnyuk.jsoniter_scala.core.*
 import scala.build.EitherCps.{either, value}
 import scala.build.*
 import scala.build.bsp.{BspReloadableOptions, BspThreads}
-import scala.build.options.{PackageOptions, PackageType}
+import scala.build.options.{PackageOptions, PackageType, Scope}
 import scala.build.errors.BuildException
 import scala.build.input.Inputs
-import scala.build.internal.CustomCodeWrapper
 import scala.build.options.BuildOptions
 import scala.cli.CurrentParams
 import scala.cli.commands.ScalaCommand
@@ -39,7 +38,7 @@ object Bsp extends ScalaCommand[BspOptions] {
     val getSharedOptions: () => SharedOptions = () => latestSharedOptions(options)
     val configDir                             = os.Path(options.confDir, Os.pwd)
 
-    val argsToInputs: Seq[String] => Either[BuildException, Inputs] =
+    val preprocessInputs: Seq[String] => Either[BuildException, (Inputs, BuildOptions)] =
       argsSeq =>
         either {
           val sharedOptions = getSharedOptions()
@@ -48,24 +47,36 @@ object Bsp extends ScalaCommand[BspOptions] {
           if (sharedOptions.logging.verbosity >= 3)
             pprint.err.log(initialInputs)
 
-          val buildOptions0    = buildOptions(sharedOptions)
+          val baseOptions      = buildOptions(sharedOptions)
           val latestLogger     = sharedOptions.logging.logger
           val persistentLogger = new PersistentDiagnosticLogger(latestLogger)
 
-          val allInputs =
-            CrossSources.forInputs(
-              initialInputs,
-              Sources.defaultPreprocessors(
-                buildOptions0.scriptOptions.codeWrapper.getOrElse(CustomCodeWrapper),
-                buildOptions0.archiveCache,
-                buildOptions0.internal.javaClassNameVersionOpt,
-                () => buildOptions0.javaHome().value.javaCommand
-              ),
-              persistentLogger,
-              buildOptions0.suppressWarningOptions
-            ).map(_._2).getOrElse(initialInputs)
+          val crossResult = CrossSources.forInputs(
+            initialInputs,
+            Sources.defaultPreprocessors(
+              baseOptions.archiveCache,
+              baseOptions.internal.javaClassNameVersionOpt,
+              () => baseOptions.javaHome().value.javaCommand
+            ),
+            persistentLogger,
+            baseOptions.suppressWarningOptions,
+            baseOptions.internal.exclude
+          )
 
-          Build.updateInputs(allInputs, buildOptions0)
+          val (allInputs, finalBuildOptions) = {
+            for
+              crossSourcesAndInputs <- crossResult
+              // compiler bug, can't do :
+              // (crossSources, crossInputs) <- crossResult
+              (crossSources, crossInputs) = crossSourcesAndInputs
+              sharedBuildOptions          = crossSources.sharedOptions(baseOptions)
+              scopedSources <- crossSources.scopedSources(sharedBuildOptions)
+              resolvedBuildOptions =
+                scopedSources.buildOptionsFor(Scope.Main).foldRight(sharedBuildOptions)(_ orElse _)
+            yield (crossInputs, resolvedBuildOptions)
+          }.getOrElse(initialInputs -> baseOptions)
+
+          Build.updateInputs(allInputs, baseOptions) -> finalBuildOptions
         }
 
     val bspReloadableOptionsReference = BspReloadableOptions.Reference { () =>
@@ -86,7 +97,7 @@ object Bsp extends ScalaCommand[BspOptions] {
     extension [V](res: Result[V, String])
       private def asBuildFailure = res.toEither.left.map(ScalaComposeException(_))
 
-    val argsToInputsModule: Seq[String] => Either[BuildException, Seq[scala.build.bsp.Module]] =
+    val preprocessInputsModule: Seq[String] => Either[BuildException, (Seq[scala.build.bsp.Module], BuildOptions)] =
       _ =>
         either {
           val configLocation = value(configFile(Some(configDir)).asBuildFailure)
@@ -97,7 +108,7 @@ object Bsp extends ScalaCommand[BspOptions] {
             yield
               val inputsRaw = Seq((configDir / os.RelPath(m.root)).toString())
 
-              val inputs = value(argsToInputs(inputsRaw))
+              val (inputs, finalBuildOptions) = value(preprocessInputs(inputsRaw))
 
               val doPackage = (pkgType: PackageType, fromModule: String, nuDest: os.RelPath) =>
                 (reloadableOptions: BspReloadableOptions, build: Build.Successful) =>
@@ -160,17 +171,33 @@ object Bsp extends ScalaCommand[BspOptions] {
                       case _ => None
                   case _ => None
                 }
-              )
+              ) -> finalBuildOptions
             end for
           end ms
-          ms.toSeq
+          val (modules, optionss) = ms.toSeq.unzip
+          val finalBuildOptions   = optionss.foldRight(BuildOptions())(_ orElse _)
+          (modules, finalBuildOptions)
         }
 
-    val modules = argsToInputsModule(Seq()).orExit(logger)
+    val (modules, finalBuildOptions) = preprocessInputsModule(Seq()).orExit(logger)
+
+    /** values used for lauching the bsp, especially for launching a bloop server, they include
+      * options extracted from sources
+      */
+    val initialBspOptions = {
+      val sharedOptions = getSharedOptions()
+      BspReloadableOptions(
+        buildOptions = buildOptions(sharedOptions) orElse finalBuildOptions,
+        bloopRifleConfig = sharedOptions.bloopRifleConfig(Some(finalBuildOptions))
+          .orExit(sharedOptions.logger),
+        logger = sharedOptions.logging.logger,
+        verbosity = sharedOptions.logging.verbosity
+      )
+    }
 
     BspThreads.withThreads { threads =>
       val bsp = scala.build.bsp.Bsp.create(
-        argsToInputsModule,
+        preprocessInputsModule.andThen(_.map(_._1)),
         bspReloadableOptionsReference,
         threads,
         System.in,
@@ -180,7 +207,7 @@ object Bsp extends ScalaCommand[BspOptions] {
       )
 
       try {
-        val doneFuture = bsp.run(modules)
+        val doneFuture = bsp.run(modules, initialBspOptions)
         Await.result(doneFuture, Duration.Inf)
       }
       finally bsp.shutdown()

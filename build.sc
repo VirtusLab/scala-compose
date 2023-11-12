@@ -715,7 +715,7 @@ trait ScalaCompose extends SbtModule with ProtoBuildModule with CliLaunchers
     `cli`
   )
 
-  def repositories = super.repositories ++ customRepositories
+  def repositoriesTask = T.task(super.repositoriesTask() ++ customRepositories)
 
   def ivyDeps = super.ivyDeps() ++ Agg(
     Deps.caseApp,
@@ -746,7 +746,7 @@ trait ScalaCompose extends SbtModule with ProtoBuildModule with CliLaunchers
 
   def localRepoJar = `local-repo`.localRepoJar()
 
-  object test extends Tests with ScalaCliTests with ScalaCliScalafixModule {
+  object test extends ScalaCliTests with ScalaCliScalafixModule {
     def moduleDeps = super.moduleDeps ++ Seq(
       `build-module`.test
     )

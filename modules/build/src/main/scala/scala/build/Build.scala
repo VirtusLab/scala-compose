@@ -293,7 +293,6 @@ object Build {
             CrossSources.forInputs(
               module.inputs,
               Sources.defaultPreprocessors(
-                options.scriptOptions.codeWrapper.getOrElse(CustomCodeWrapper),
                 options.archiveCache,
                 options.internal.javaClassNameVersionOpt,
                 () => options.javaHome().value.javaCommand
@@ -428,9 +427,6 @@ object Build {
 
       val scopedSources = value(crossSources.scopedSources(baseOptions))
 
-      val mainSources0 = value(scopedSources.sources(Scope.Main, baseOptions orElse mainDeps, allInputs.workspace))
-      val testSources0 = value(scopedSources.sources(Scope.Test, baseOptions orElse testDeps, allInputs.workspace))
-
       val platformArg0 =
         b.cm.platform.map(p => Positioned(List(Position.Custom("DEFAULT-COMPOSE")), p))
 
@@ -438,6 +434,9 @@ object Build {
 
       val mainDeps = value(b.cm.depOptions(baseOptions, Scope.Main, modulePlatform))
       val testDeps = value(b.cm.depOptions(baseOptions, Scope.Test, modulePlatform))
+
+      val mainSources0 = value(scopedSources.sources(Scope.Main, baseOptions orElse mainDeps, allInputs.workspace))
+      val testSources0 = value(scopedSources.sources(Scope.Test, baseOptions orElse testDeps, allInputs.workspace))
 
       def mixInPlatform(baseOptions: BuildOptions) = baseOptions.copy(
         scalaOptions = baseOptions.scalaOptions.copy(platform = Some(modulePlatform))

@@ -24,7 +24,7 @@ import scala.build.errors.{
   ParsingInputsException
 }
 import scala.build.input.{Inputs, ScalaCliInvokeData}
-import scala.build.internal.{Constants, CustomCodeWrapper}
+import scala.build.internal.Constants
 import scala.build.options.{BuildOptions, ClassPathOptions, Platform, ScalaOptions, Scope}
 import scala.collection.mutable.ListBuffer
 import scala.concurrent.duration.DurationInt
@@ -117,13 +117,13 @@ final class BspImpl(
         ).left.map((_, Scope.Main))
       }
 
-    val sharedOptions = crossSources.sharedOptions(buildOptions)
+      val sharedOptions = crossSources.sharedOptions(buildOptions)
 
-    if (verbosity >= 3)
-      pprint.err.log(crossSources)
+      if (verbosity >= 3)
+        pprint.err.log(crossSources)
 
-    val scopedSources =
-      value(crossSources.scopedSources(buildOptions).left.map((_, Scope.Main)))
+      val scopedSources =
+        value(crossSources.scopedSources(buildOptions).left.map((_, Scope.Main)))
 
       if (verbosity >= 3)
         pprint.err.log(scopedSources)
@@ -213,11 +213,11 @@ final class BspImpl(
       )
 
       val sourcesMain0 = value {
-        cm.scopedSources.sources(Scope.Main, sharedOptions orElse mainDeps, allInputs.workspace)
+        cm.scopedSources.sources(Scope.Main, sharedOptions orElse mainDeps, cm.allInputs.workspace)
           .left.map((_, Scope.Main))
       }
       val sourcesTest0 = value {
-        cm.scopedSources.sources(Scope.Test, sharedOptions orElse testDeps, allInputs.workspace)
+        cm.scopedSources.sources(Scope.Test, sharedOptions orElse testDeps, cm.allInputs.workspace)
           .left.map((_, Scope.Test))
       }
       def addResource(sources: Sources, resourceDir: os.Path): Sources =
@@ -703,7 +703,6 @@ final class BspImpl(
     val remoteClient = launcher.getRemoteProxy
     actualLocalClient.forwardToOpt = Some(remoteClient)
 
-    localClient.onConnectWithServer(currentBloopSession.remoteServer.bloopServer.server)
     actualLocalClient.newInputs(configDir, initialInputs)
     currentBloopSession.resetDiagnostics(actualLocalClient)
 
@@ -784,7 +783,6 @@ final class BspImpl(
     val newBloopSession0 = newBloopSession(newInputs, reloadableOptions, wasIntelliJ)
     bloopSession.update(currentBloopSession, newBloopSession0, "Concurrent reload of workspace")
     actualLocalClient.newInputs(configDir, newInputs)
-    localClient.onConnectWithServer(newBloopSession0.remoteServer.bloopServer.server)
 
     newBloopSession0.resetDiagnostics(actualLocalClient)
     prepareBuild(newBloopSession0, reloadableOptions) match {

@@ -359,7 +359,8 @@ object Run extends ScalaCommand[RunOptions] with BuildCommandHelpers {
     potentialMainClasses: Seq[String],
     runMode: RunMode,
     showCommand: Boolean,
-    scratchDirOpt: Option[os.Path]
+    scratchDirOpt: Option[os.Path],
+    asJar: Boolean
   ): Either[BuildException, Either[Seq[String], (Process, Option[() => Unit])]] =
     maybeRunOnce(
       build,
@@ -370,7 +371,8 @@ object Run extends ScalaCommand[RunOptions] with BuildCommandHelpers {
       potentialMainClasses,
       runMode,
       showCommand,
-      scratchDirOpt
+      scratchDirOpt,
+      asJar
     )
 
   private def maybeRunOnce(
